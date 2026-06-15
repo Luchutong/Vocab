@@ -35,11 +35,19 @@ TRANSLATION_API_URL = os.environ.get(
 DATAMUSE_API_URL = os.environ.get(
     "DATAMUSE_API_URL", "https://api.datamuse.com/sug"
 )
+MERRIAM_WEBSTER_API_URL = os.environ.get(
+    "MERRIAM_WEBSTER_API_URL",
+    "https://www.dictionaryapi.com/api/v3/references/learners/json/{word}",
+)
+MERRIAM_WEBSTER_API_KEY = os.environ.get(
+    "MERRIAM_WEBSTER_API_KEY", ""
+).strip()
 ONLINE_ENABLED = os.environ.get("ONLINE_DICTIONARY_ENABLED", "1") != "0"
 REQUEST_TIMEOUT = float(os.environ.get("DICTIONARY_API_TIMEOUT", "8"))
 USER_AGENT = (
     "VocabBuilder/1.0 (+https://github.com/Luchutong/Vocab)"
 )
+_MERRIAM_SUGGESTIONS = {}
 
 # This compact fallback keeps the application useful when the full ECDICT
 # archive is unavailable. Common inflections are handled by variations.py.
@@ -260,7 +268,7 @@ def _cache_get(word):
         with _cache_connection() as db:
             row = db.execute(
                 """
-                SELECT definition, phonetic, pos
+                SELECT definition, phonetic, pos, source
                 FROM dictionary_cache WHERE word=?
                 """,
                 (word,),
@@ -269,7 +277,12 @@ def _cache_get(word):
         return None
     if not row:
         return None
-    return {"definition": row[0], "phonetic": row[1], "pos": row[2]}
+    return {
+        "definition": row[0],
+        "phonetic": row[1],
+        "pos": row[2],
+        "_source": row[3],
+    }
 
 
 def _cache_set(word, result, source):
@@ -304,11 +317,18 @@ def _clean_translation(text):
     text = "".join(
         char for char in text if unicodedata.category(char) != "Co"
     )
+    text = re.sub(r"\s*[|｜]\s*", "；", text)
     text = re.sub(r"\s+", " ", text).strip(" ;；,，")
     return text
 
 
-def _translate_word(word, english_definitions):
+def _clean_merriam_definition(text):
+    text = text.strip().lstrip("—- ").strip()
+    text = text.split("—", 1)[0].strip()
+    return text
+
+
+def _translate_word(word, english_definitions, include_definitions=False):
     params = {
         "q": word,
         "langpair": "en|zh-CN",
@@ -341,19 +361,85 @@ def _translate_word(word, english_definitions):
         if len(translations) >= 3:
             break
 
-    if translations:
-        return "；".join(translations)
-
     summary = " | ".join(english_definitions)[:450]
-    if not summary:
-        return ""
-    params["q"] = summary
-    data = _request_json(
-        TRANSLATION_API_URL + "?" + urllib.parse.urlencode(params)
+    if summary and (include_definitions or not translations):
+        params["q"] = summary
+        data = _request_json(
+            TRANSLATION_API_URL + "?" + urllib.parse.urlencode(params)
+        )
+        detail = _clean_translation(
+            data.get("responseData", {}).get("translatedText", "")
+        )
+        if detail and detail not in translations:
+            translations.append(detail)
+    return "；".join(translations)
+
+
+def _merriam_webster_lookup(word):
+    params = urllib.parse.urlencode({"key": MERRIAM_WEBSTER_API_KEY})
+    url = MERRIAM_WEBSTER_API_URL.format(
+        word=urllib.parse.quote(word, safe="")
     )
-    return _clean_translation(
-        data.get("responseData", {}).get("translatedText", "")
-    )
+    entries = _request_json(url + "?" + params)
+    if not isinstance(entries, list) or not entries:
+        _MERRIAM_SUGGESTIONS[word] = []
+        return None
+    if isinstance(entries[0], str):
+        _MERRIAM_SUGGESTIONS[word] = [
+            item.lower()
+            for item in entries
+            if _valid_word(item) and item.lower() != word
+        ]
+        return None
+
+    positions = []
+    definitions = []
+    phonetic = ""
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        stems = {
+            stem.lower()
+            for stem in entry.get("meta", {}).get("stems", [])
+            if isinstance(stem, str)
+        }
+        shortdefs = [
+            _clean_merriam_definition(definition)
+            for definition in entry.get("shortdef", [])
+            if isinstance(definition, str) and definition.strip()
+        ]
+        shortdefs = [definition for definition in shortdefs if definition]
+        if word not in stems or not shortdefs:
+            continue
+
+        position = (entry.get("fl") or "").strip()
+        if position and position not in positions:
+            positions.append(position)
+        if not phonetic:
+            for pronunciation in entry.get("hwi", {}).get("prs", []) or []:
+                value = (pronunciation.get("ipa") or "").strip().strip("/")
+                if value:
+                    phonetic = value
+                    break
+        for definition in shortdefs[:3]:
+            if definition not in definitions:
+                definitions.append(definition)
+            if len(definitions) >= 5:
+                break
+        if len(definitions) >= 5 and len(positions) >= 2:
+            break
+
+    if not definitions:
+        return None
+    chinese = _translate_word(word, definitions, include_definitions=True)
+    if not chinese:
+        return None
+    _MERRIAM_SUGGESTIONS.pop(word, None)
+    return {
+        "definition": chinese,
+        "phonetic": phonetic,
+        "pos": "/".join(positions[:4]),
+    }
 
 
 def _online_lookup(word):
@@ -401,7 +487,33 @@ def lookup(word):
     if not _valid_word(word):
         return None
     cached = _cache_get(word)
+    if cached and (
+        not (ONLINE_ENABLED and MERRIAM_WEBSTER_API_KEY)
+        or cached["_source"] == "merriam-webster"
+    ):
+        cached.pop("_source", None)
+        return cached
+
+    if ONLINE_ENABLED and MERRIAM_WEBSTER_API_KEY:
+        try:
+            result = _merriam_webster_lookup(word)
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+            urllib.error.HTTPError,
+        ):
+            result = None
+        else:
+            if result:
+                _cache_set(word, result, "merriam-webster")
+                return result
+            if word in _MERRIAM_SUGGESTIONS:
+                return None
+
     if cached:
+        cached.pop("_source", None)
         return cached
     if os.path.exists(DB_PATH):
         try:
@@ -448,6 +560,9 @@ def lookup(word):
 
 def suggestions(word, limit=5):
     word = (word or "").strip().lower()
+    merriam_matches = _MERRIAM_SUGGESTIONS.pop(word, [])
+    if merriam_matches:
+        return merriam_matches[:limit]
     candidates = set(FALLBACK)
     if os.path.exists(DB_PATH) and _valid_word(word):
         try:

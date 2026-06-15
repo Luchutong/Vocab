@@ -27,8 +27,10 @@
 ## 3. 词典与拼写检查
 
 - 默认使用轻量在线词典，不要求下载完整词库。
-- DictionaryAPI.dev 负责校验单词并提供音标、词性和英文释义。
+- 配置 Key 时，Merriam-Webster Learner's Dictionary API 为首选查词来源。
+- Merriam-Webster 负责拼写校验、候选词、音标、词性和学习者英文释义。
 - MyMemory 负责生成中文释义，Datamuse 负责拼写建议。
+- 未配置 Key 或官方服务故障时，DictionaryAPI.dev 与 Datamuse 作为降级来源。
 - 在线结果缓存到小型 SQLite 文件，同一单词后续直接从缓存读取。
 - 网络不可用时自动使用缓存和内置 CET-6 高频词后备库。
 - ECDICT 为可选离线词典，路径为 `data/ecdict.db`。

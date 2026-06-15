@@ -34,6 +34,7 @@ python app.py
 | `DICTIONARY_CACHE_DATABASE` | 建议 | 在线词典缓存路径，默认 `data/dictionary-cache.db` |
 | `DICTIONARY_API_TIMEOUT` | 否 | 单次在线词典请求超时秒数，默认 `8` |
 | `MYMEMORY_EMAIL` | 否 | 提交给 MyMemory 的联系邮箱，可提高免费额度；不设置则不发送 |
+| `MERRIAM_WEBSTER_API_KEY` | 建议 | Merriam-Webster Learner's Dictionary API Key，首选查词来源 |
 
 邮件服务未配置或发送失败时，注册账户仍会保留，用户可以稍后重新发送。
 
@@ -82,6 +83,7 @@ ECDICT_DATABASE=/var/lib/vocab/ecdict.db
 DICTIONARY_CACHE_DATABASE=/var/lib/vocab/dictionary-cache.db
 ONLINE_DICTIONARY_ENABLED=1
 DICTIONARY_API_TIMEOUT=8
+MERRIAM_WEBSTER_API_KEY=替换为你的Learner词典API密钥
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_USERNAME=username
@@ -177,20 +179,23 @@ sudo systemctl reload nginx
 
 ### 5. 在线词典与轻量部署
 
-默认无需下载完整 ECDICT。系统按以下顺序查询：
+默认无需下载完整 ECDICT。配置 `MERRIAM_WEBSTER_API_KEY` 后，系统按以下
+顺序查询：
 
-1. 小型 SQLite 在线查询缓存。
-2. 可选的本地 ECDICT。
-3. 内置 CET-6 高频词后备库。
-4. DictionaryAPI.dev 校验单词并获取音标、词性。
-5. MyMemory 将释义转换为中文。
+1. Merriam-Webster 查询缓存。
+2. Merriam-Webster Learner's Dictionary 校验拼写并获取音标、词性和学习者释义。
+3. MyMemory 将释义转换为中文。
+4. API 暂时故障时退回旧缓存、可选 ECDICT 和内置高频词库。
+5. 未配置 Key 时使用 DictionaryAPI.dev 和 Datamuse 免费接口。
 
-拼写建议使用 Datamuse API，网络异常时自动退回本地近似匹配。成功的在线
-查询会写入 `dictionary-cache.db`，同一单词以后不再请求第三方服务。这样部署
-时只需持久化一个会按实际使用缓慢增长的小文件。
+拼写错误时优先采用 Merriam-Webster 原生候选词，且不会为同一次输入重复请求。
+成功查询会写入 `dictionary-cache.db`，同一单词以后直接使用缓存。Key 只能放在
+服务端 `.env` 或 `/etc/vocab.env` 中，不得写入前端、源码或 Git。
 
-在线服务均可不带 API 密钥使用，但受第三方可用性和免费额度约束。项目文档
-对 [DictionaryAPI.dev](https://dictionaryapi.dev/)、
+Merriam-Webster API 受其订阅额度和使用条款约束。降级服务受第三方可用性和
+免费额度约束。项目文档对
+[Merriam-Webster](https://www.dictionaryapi.com/products/api-learners-dictionary)、
+[DictionaryAPI.dev](https://dictionaryapi.dev/)、
 [MyMemory](https://mymemory.translated.net/doc/spec.php) 和
 [Datamuse](https://www.datamuse.com/api/) 表示感谢。若不希望服务器访问第三方
 服务，将 `ONLINE_DICTIONARY_ENABLED=0`，并安装完整 ECDICT。
