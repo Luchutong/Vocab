@@ -27,7 +27,8 @@ python app.py
 | `SMTP_PORT` | 是 | SMTP 端口，STARTTLS 通常使用 `587` |
 | `SMTP_USERNAME` | 视服务而定 | SMTP 用户名 |
 | `SMTP_PASSWORD` | 视服务而定 | SMTP 密码或授权码 |
-| `SMTP_USE_TLS` | 否 | `1` 使用 STARTTLS，`0` 使用普通 SMTP，默认 `1` |
+| `SMTP_SECURITY` | 建议 | `ssl`、`starttls` 或 `plain`；天大邮箱云服务器部署建议 `ssl` |
+| `SMTP_USE_TLS` | 兼容项 | 未设置 `SMTP_SECURITY` 时，`1` 使用 STARTTLS，`0` 使用普通 SMTP |
 | `MAIL_FROM` | 是 | 验证和重置邮件的发件人地址 |
 | `TRUST_PROXY` | 反向代理时 | 通过 Nginx 部署时设为 `1`，使外部链接使用正确域名和 HTTPS |
 | `ONLINE_DICTIONARY_ENABLED` | 否 | `1` 启用在线词典，`0` 仅使用本地数据，默认 `1` |
@@ -84,12 +85,12 @@ DICTIONARY_CACHE_DATABASE=/var/lib/vocab/dictionary-cache.db
 ONLINE_DICTIONARY_ENABLED=1
 DICTIONARY_API_TIMEOUT=8
 MERRIAM_WEBSTER_API_KEY=替换为你的Learner词典API密钥
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=username
+SMTP_HOST=smtp.tju.edu.cn
+SMTP_PORT=465
+SMTP_USERNAME=你的邮箱@tju.edu.cn
 SMTP_PASSWORD=password-or-app-token
-SMTP_USE_TLS=1
-MAIL_FROM=vocab@example.com
+SMTP_SECURITY=ssl
+MAIL_FROM=你的邮箱@tju.edu.cn
 TRUST_PROXY=1
 ```
 
@@ -101,6 +102,27 @@ sudo chmod 640 /etc/vocab.env
 ```
 
 不要将 `/etc/vocab.env`、数据库或 SMTP 密码提交到 Git。
+
+天大邮箱支持 `25 + STARTTLS` 和 `465 + SSL`。许多云厂商默认封锁出站
+25 端口，因此服务器部署优先使用：
+
+```ini
+SMTP_HOST=smtp.tju.edu.cn
+SMTP_PORT=465
+SMTP_SECURITY=ssl
+```
+
+若邮件仍然失败，在服务器执行以下无密码诊断：
+
+```bash
+getent ahosts smtp.tju.edu.cn
+timeout 8 bash -c '</dev/tcp/smtp.tju.edu.cn/465' && echo 端口可达
+sudo systemctl show vocab --property=EnvironmentFiles
+sudo journalctl -u vocab -n 100 --no-pager
+```
+
+修改 `/etc/vocab.env` 后必须执行 `sudo systemctl restart vocab`。注意 systemd
+的 `EnvironmentFile` 使用 `KEY=value`，不要写 shell 的 `export KEY=value`。
 
 ### 3. 配置 systemd 常驻和开机自启
 

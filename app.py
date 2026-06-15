@@ -56,6 +56,7 @@ def create_app(test_config=None):
         SMTP_USERNAME=os.environ.get("SMTP_USERNAME", ""),
         SMTP_PASSWORD=os.environ.get("SMTP_PASSWORD", ""),
         SMTP_USE_TLS=os.environ.get("SMTP_USE_TLS", "1") != "0",
+        SMTP_SECURITY=os.environ.get("SMTP_SECURITY", "").strip().lower(),
         MAIL_FROM=os.environ.get("MAIL_FROM", ""),
         TRUST_PROXY=os.environ.get("TRUST_PROXY", "0") == "1",
     )
@@ -114,21 +115,34 @@ def send_email(recipient, subject, body):
     message["Subject"] = subject
     message.set_content(body)
 
-    if app.config["SMTP_USE_TLS"]:
-        with smtplib.SMTP(host, app.config["SMTP_PORT"], timeout=15) as smtp:
-            smtp.starttls(context=ssl.create_default_context())
-            if app.config["SMTP_USERNAME"]:
-                smtp.login(
-                    app.config["SMTP_USERNAME"], app.config["SMTP_PASSWORD"]
-                )
-            smtp.send_message(message)
+    security = app.config["SMTP_SECURITY"]
+    if not security:
+        security = "starttls" if app.config["SMTP_USE_TLS"] else "plain"
+    if security not in {"ssl", "starttls", "plain"}:
+        raise RuntimeError("SMTP_SECURITY 必须是 ssl、starttls 或 plain")
+
+    if security == "ssl":
+        smtp_client = smtplib.SMTP_SSL(
+            host,
+            app.config["SMTP_PORT"],
+            timeout=15,
+            context=ssl.create_default_context(),
+        )
     else:
-        with smtplib.SMTP(host, app.config["SMTP_PORT"], timeout=15) as smtp:
-            if app.config["SMTP_USERNAME"]:
-                smtp.login(
-                    app.config["SMTP_USERNAME"], app.config["SMTP_PASSWORD"]
-                )
-            smtp.send_message(message)
+        smtp_client = smtplib.SMTP(
+            host, app.config["SMTP_PORT"], timeout=15
+        )
+
+    with smtp_client as smtp:
+        smtp.ehlo()
+        if security == "starttls":
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.ehlo()
+        if app.config["SMTP_USERNAME"]:
+            smtp.login(
+                app.config["SMTP_USERNAME"], app.config["SMTP_PASSWORD"]
+            )
+        smtp.send_message(message)
 
 
 def send_verification(user):

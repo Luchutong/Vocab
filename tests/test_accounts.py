@@ -1,4 +1,5 @@
-from app import make_token
+import app as app_module
+from app import make_token, send_email
 from models import get_db
 
 
@@ -105,3 +106,66 @@ def test_password_reset_changes_login_password(app, client, make_user):
     )
     assert response.status_code == 302
     assert response.location == "/"
+
+
+def test_send_email_supports_implicit_ssl(app, monkeypatch):
+    events = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout, context):
+            events.append(("connect", host, port, timeout, bool(context)))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def ehlo(self):
+            events.append(("ehlo",))
+
+        def login(self, username, password):
+            events.append(("login", username, password))
+
+        def send_message(self, message):
+            events.append(
+                ("send", message["From"], message["To"], message["Subject"])
+            )
+
+    monkeypatch.setattr(app_module.smtplib, "SMTP_SSL", FakeSMTP)
+    app.config.update(
+        SMTP_HOST="smtp.tju.edu.cn",
+        SMTP_PORT=465,
+        SMTP_USERNAME="sender@tju.edu.cn",
+        SMTP_PASSWORD="secret",
+        SMTP_SECURITY="ssl",
+        MAIL_FROM="sender@tju.edu.cn",
+    )
+
+    with app.app_context():
+        send_email("recipient@tju.edu.cn", "测试邮件", "正文")
+
+    assert events == [
+        ("connect", "smtp.tju.edu.cn", 465, 15, True),
+        ("ehlo",),
+        ("login", "sender@tju.edu.cn", "secret"),
+        ("send", "sender@tju.edu.cn", "recipient@tju.edu.cn", "测试邮件"),
+    ]
+
+
+def test_send_email_rejects_invalid_security(app):
+    app.config.update(
+        SMTP_HOST="smtp.tju.edu.cn",
+        SMTP_PORT=465,
+        SMTP_USERNAME="sender@tju.edu.cn",
+        SMTP_PASSWORD="secret",
+        SMTP_SECURITY="invalid",
+        MAIL_FROM="sender@tju.edu.cn",
+    )
+    with app.app_context():
+        try:
+            send_email("recipient@tju.edu.cn", "测试邮件", "正文")
+        except RuntimeError as error:
+            assert "SMTP_SECURITY" in str(error)
+        else:
+            raise AssertionError("invalid SMTP security was accepted")
