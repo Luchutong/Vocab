@@ -8,7 +8,9 @@ import zipfile
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-DB_PATH = os.path.join(DATA_DIR, "ecdict.db")
+DB_PATH = os.environ.get(
+    "ECDICT_DATABASE", os.path.join(DATA_DIR, "ecdict.db")
+)
 ARCHIVE_URL = (
     "https://github.com/skywind3000/ECDICT/releases/download/"
     "1.0.28/ecdict-sqlite-28.zip"

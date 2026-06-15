@@ -24,6 +24,7 @@ from flask import (
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from dict_query import download_ecdict, lookup, suggestions
@@ -56,9 +57,14 @@ def create_app(test_config=None):
         SMTP_PASSWORD=os.environ.get("SMTP_PASSWORD", ""),
         SMTP_USE_TLS=os.environ.get("SMTP_USE_TLS", "1") != "0",
         MAIL_FROM=os.environ.get("MAIL_FROM", ""),
+        TRUST_PROXY=os.environ.get("TRUST_PROXY", "0") == "1",
     )
     if test_config:
         app.config.update(test_config)
+    if app.config["TRUST_PROXY"]:
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app, x_for=1, x_proto=1, x_host=1
+        )
 
     register_app(app)
     register_routes(app)
