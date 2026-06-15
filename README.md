@@ -9,7 +9,11 @@
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+cp .env.example .env
+# 编辑 .env，填写 SECRET_KEY、邮箱密码和词典 API Key
+set -a
+source .env
+set +a
 python app.py
 ```
 
@@ -38,6 +42,29 @@ python app.py
 | `MERRIAM_WEBSTER_API_KEY` | 建议 | Merriam-Webster Learner's Dictionary API Key，首选查词来源 |
 
 邮件服务未配置或发送失败时，注册账户仍会保留，用户可以稍后重新发送。
+
+`.env.example` 只包含占位值，可以提交；实际 `.env` 已被 Git 忽略，禁止提交。
+项目根目录 `.env` 使用普通的 `KEY=value` 格式，启动前通过
+`set -a; source .env; set +a` 导出给应用进程。
+
+## 服务器快速验收
+
+在正式配置 systemd 前，可以临时验证服务器环境：
+
+```bash
+cd /home/ubuntu/Vocab
+cp .env.example .env
+nano .env
+chmod 600 .env
+set -a
+source .env
+set +a
+venv/bin/python3 app.py
+```
+
+浏览器访问 `http://服务器IP:6657`。这只适合短期验收；Flask 开发服务器不应
+长期直接暴露到公网。验收完成后应使用下方的 Gunicorn、systemd、Nginx 和
+HTTPS 部署方案。
 
 ## 持久化部署
 
