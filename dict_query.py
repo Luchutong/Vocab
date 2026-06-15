@@ -1,7 +1,12 @@
 import difflib
+import json
 import os
 import re
 import sqlite3
+import time
+import unicodedata
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -11,9 +16,29 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.environ.get(
     "ECDICT_DATABASE", os.path.join(DATA_DIR, "ecdict.db")
 )
+CACHE_PATH = os.environ.get(
+    "DICTIONARY_CACHE_DATABASE",
+    os.path.join(DATA_DIR, "dictionary-cache.db"),
+)
 ARCHIVE_URL = (
     "https://github.com/skywind3000/ECDICT/releases/download/"
     "1.0.28/ecdict-sqlite-28.zip"
+)
+DICTIONARY_API_URL = os.environ.get(
+    "DICTIONARY_API_URL",
+    "https://api.dictionaryapi.dev/api/v2/entries/en/{word}",
+)
+TRANSLATION_API_URL = os.environ.get(
+    "TRANSLATION_API_URL",
+    "https://api.mymemory.translated.net/get",
+)
+DATAMUSE_API_URL = os.environ.get(
+    "DATAMUSE_API_URL", "https://api.datamuse.com/sug"
+)
+ONLINE_ENABLED = os.environ.get("ONLINE_DICTIONARY_ENABLED", "1") != "0"
+REQUEST_TIMEOUT = float(os.environ.get("DICTIONARY_API_TIMEOUT", "8"))
+USER_AGENT = (
+    "VocabBuilder/1.0 (+https://github.com/Luchutong/Vocab)"
 )
 
 # This compact fallback keeps the application useful when the full ECDICT
@@ -196,10 +221,188 @@ def _valid_word(word):
     return bool(re.fullmatch(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", word))
 
 
+def _request_json(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
+    )
+    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
+        return json.load(response)
+
+
+def _cache_connection():
+    cache_dir = os.path.dirname(CACHE_PATH)
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+    db = sqlite3.connect(CACHE_PATH, timeout=5)
+    db.execute("PRAGMA journal_mode = WAL")
+    db.execute("PRAGMA busy_timeout = 5000")
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dictionary_cache (
+            word TEXT PRIMARY KEY COLLATE NOCASE,
+            definition TEXT NOT NULL,
+            phonetic TEXT NOT NULL DEFAULT '',
+            pos TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL,
+            cached_at INTEGER NOT NULL
+        )
+        """
+    )
+    return db
+
+
+def _cache_get(word):
+    try:
+        with _cache_connection() as db:
+            row = db.execute(
+                """
+                SELECT definition, phonetic, pos
+                FROM dictionary_cache WHERE word=?
+                """,
+                (word,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    return {"definition": row[0], "phonetic": row[1], "pos": row[2]}
+
+
+def _cache_set(word, result, source):
+    try:
+        with _cache_connection() as db:
+            db.execute(
+                """
+                INSERT INTO dictionary_cache(
+                    word, definition, phonetic, pos, source, cached_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(word) DO UPDATE SET
+                    definition=excluded.definition,
+                    phonetic=excluded.phonetic,
+                    pos=excluded.pos,
+                    source=excluded.source,
+                    cached_at=excluded.cached_at
+                """,
+                (
+                    word,
+                    result["definition"],
+                    result.get("phonetic", ""),
+                    result.get("pos", ""),
+                    source,
+                    int(time.time()),
+                ),
+            )
+    except sqlite3.Error:
+        pass
+
+
+def _clean_translation(text):
+    text = "".join(
+        char for char in text if unicodedata.category(char) != "Co"
+    )
+    text = re.sub(r"\s+", " ", text).strip(" ;；,，")
+    return text
+
+
+def _translate_word(word, english_definitions):
+    params = {
+        "q": word,
+        "langpair": "en|zh-CN",
+    }
+    contact = os.environ.get("MYMEMORY_EMAIL")
+    if contact:
+        params["de"] = contact
+    data = _request_json(
+        TRANSLATION_API_URL + "?" + urllib.parse.urlencode(params)
+    )
+    translations = []
+    primary = _clean_translation(
+        data.get("responseData", {}).get("translatedText", "")
+    )
+    if primary and primary.lower() != word:
+        translations.append(primary)
+    for match in data.get("matches", []):
+        try:
+            quality = int(match.get("quality", 0))
+        except (TypeError, ValueError):
+            quality = 0
+        value = _clean_translation(match.get("translation", ""))
+        if (
+            quality >= 50
+            and value
+            and value.lower() != word
+            and value not in translations
+        ):
+            translations.append(value)
+        if len(translations) >= 3:
+            break
+
+    if translations:
+        return "；".join(translations)
+
+    summary = " | ".join(english_definitions)[:450]
+    if not summary:
+        return ""
+    params["q"] = summary
+    data = _request_json(
+        TRANSLATION_API_URL + "?" + urllib.parse.urlencode(params)
+    )
+    return _clean_translation(
+        data.get("responseData", {}).get("translatedText", "")
+    )
+
+
+def _online_lookup(word):
+    dictionary_url = DICTIONARY_API_URL.format(
+        word=urllib.parse.quote(word, safe="")
+    )
+    entries = _request_json(dictionary_url)
+    if not isinstance(entries, list) or not entries:
+        return None
+    entry = entries[0]
+
+    phonetic = (entry.get("phonetic") or "").strip().strip("/")
+    if not phonetic:
+        for item in entry.get("phonetics", []):
+            value = (item.get("text") or "").strip().strip("/")
+            if value:
+                phonetic = value
+                break
+
+    positions = []
+    definitions = []
+    for meaning in entry.get("meanings", []):
+        position = (meaning.get("partOfSpeech") or "").strip()
+        if position and position not in positions:
+            positions.append(position)
+        for definition in meaning.get("definitions", [])[:1]:
+            text = (definition.get("definition") or "").strip()
+            if text:
+                definitions.append(text)
+        if len(definitions) >= 4:
+            break
+
+    chinese = _translate_word(word, definitions)
+    if not chinese:
+        return None
+    return {
+        "definition": chinese,
+        "phonetic": phonetic,
+        "pos": "/".join(positions[:4]),
+    }
+
+
 def lookup(word):
     word = (word or "").strip().lower()
     if not _valid_word(word):
         return None
+    cached = _cache_get(word)
+    if cached:
+        return cached
     if os.path.exists(DB_PATH):
         try:
             with sqlite3.connect(DB_PATH) as db:
@@ -212,15 +415,35 @@ def lookup(word):
                     (word,),
                 ).fetchone()
             if row and row[0]:
-                return {
+                result = {
                     "definition": row[0].strip(),
                     "phonetic": row[1].strip(),
                     "pos": row[2].strip(),
                 }
+                _cache_set(word, result, "ecdict")
+                return result
         except sqlite3.Error:
             pass
     result = FALLBACK.get(word)
-    return dict(result) if result else None
+    if result:
+        result = dict(result)
+        _cache_set(word, result, "fallback")
+        return result
+    if ONLINE_ENABLED:
+        try:
+            result = _online_lookup(word)
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+            urllib.error.HTTPError,
+        ):
+            result = None
+        if result:
+            _cache_set(word, result, "online")
+            return result
+    return None
 
 
 def suggestions(word, limit=5):
@@ -236,10 +459,36 @@ def suggestions(word, limit=5):
             candidates.update(row[0].lower() for row in rows)
         except sqlite3.Error:
             pass
-    return difflib.get_close_matches(word, candidates, n=limit, cutoff=0.65)
+    local_matches = difflib.get_close_matches(
+        word, candidates, n=limit, cutoff=0.65
+    )
+    if ONLINE_ENABLED and _valid_word(word):
+        try:
+            query = urllib.parse.urlencode({"s": word, "max": limit * 2})
+            rows = _request_json(DATAMUSE_API_URL + "?" + query)
+            online_matches = [
+                row["word"].lower()
+                for row in rows
+                if isinstance(row, dict)
+                and _valid_word(row.get("word", ""))
+                and row.get("word", "").lower() != word
+            ]
+            return list(dict.fromkeys(online_matches + local_matches))[:limit]
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+            urllib.error.HTTPError,
+        ):
+            pass
+    return local_matches
 
 
 def download_ecdict(force=False):
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
     if os.path.exists(DB_PATH) and not force:
         return DB_PATH

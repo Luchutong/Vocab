@@ -26,9 +26,13 @@
 
 ## 3. 词典与拼写检查
 
-- 使用 ECDICT SQLite 词典，路径为 `data/ecdict.db`。
-- 提供命令 `flask --app app download-dictionary` 下载完整词典。
-- 完整词典不可用时，使用内置 CET-6 高频词后备库。
+- 默认使用轻量在线词典，不要求下载完整词库。
+- DictionaryAPI.dev 负责校验单词并提供音标、词性和英文释义。
+- MyMemory 负责生成中文释义，Datamuse 负责拼写建议。
+- 在线结果缓存到小型 SQLite 文件，同一单词后续直接从缓存读取。
+- 网络不可用时自动使用缓存和内置 CET-6 高频词后备库。
+- ECDICT 为可选离线词典，路径为 `data/ecdict.db`。
+- 提供命令 `flask --app app download-dictionary` 下载完整 ECDICT。
 - 查询返回中文释义、音标和词性。
 - 查询不到时禁止导入，并返回相近拼写候选词。
 - 单词仅允许英文字母，以及合理的连字符和撇号。

@@ -30,6 +30,10 @@ python app.py
 | `SMTP_USE_TLS` | 否 | `1` 使用 STARTTLS，`0` 使用普通 SMTP，默认 `1` |
 | `MAIL_FROM` | 是 | 验证和重置邮件的发件人地址 |
 | `TRUST_PROXY` | 反向代理时 | 通过 Nginx 部署时设为 `1`，使外部链接使用正确域名和 HTTPS |
+| `ONLINE_DICTIONARY_ENABLED` | 否 | `1` 启用在线词典，`0` 仅使用本地数据，默认 `1` |
+| `DICTIONARY_CACHE_DATABASE` | 建议 | 在线词典缓存路径，默认 `data/dictionary-cache.db` |
+| `DICTIONARY_API_TIMEOUT` | 否 | 单次在线词典请求超时秒数，默认 `8` |
+| `MYMEMORY_EMAIL` | 否 | 提交给 MyMemory 的联系邮箱，可提高免费额度；不设置则不发送 |
 
 邮件服务未配置或发送失败时，注册账户仍会保留，用户可以稍后重新发送。
 
@@ -75,6 +79,9 @@ python3 -c 'import secrets; print(secrets.token_hex(32))'
 SECRET_KEY=替换为上一步生成的随机字符串
 DATABASE=/var/lib/vocab/vocab.db
 ECDICT_DATABASE=/var/lib/vocab/ecdict.db
+DICTIONARY_CACHE_DATABASE=/var/lib/vocab/dictionary-cache.db
+ONLINE_DICTIONARY_ENABLED=1
+DICTIONARY_API_TIMEOUT=8
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_USERNAME=username
@@ -168,11 +175,32 @@ sudo systemctl reload nginx
 公网部署应使用 Certbot 或其他方式启用 HTTPS。邮箱验证链接会依据请求的
 域名和协议生成，因此生产环境必须通过正式域名访问。
 
-### 5. 数据持久化和自动备份
+### 5. 在线词典与轻量部署
+
+默认无需下载完整 ECDICT。系统按以下顺序查询：
+
+1. 小型 SQLite 在线查询缓存。
+2. 可选的本地 ECDICT。
+3. 内置 CET-6 高频词后备库。
+4. DictionaryAPI.dev 校验单词并获取音标、词性。
+5. MyMemory 将释义转换为中文。
+
+拼写建议使用 Datamuse API，网络异常时自动退回本地近似匹配。成功的在线
+查询会写入 `dictionary-cache.db`，同一单词以后不再请求第三方服务。这样部署
+时只需持久化一个会按实际使用缓慢增长的小文件。
+
+在线服务均可不带 API 密钥使用，但受第三方可用性和免费额度约束。项目文档
+对 [DictionaryAPI.dev](https://dictionaryapi.dev/)、
+[MyMemory](https://mymemory.translated.net/doc/spec.php) 和
+[Datamuse](https://www.datamuse.com/api/) 表示感谢。若不希望服务器访问第三方
+服务，将 `ONLINE_DICTIONARY_ENABLED=0`，并安装完整 ECDICT。
+
+### 6. 数据持久化和自动备份
 
 需要持久化的文件：
 
 - `/var/lib/vocab/vocab.db`：用户、单词、复习进度和设置。
+- `/var/lib/vocab/dictionary-cache.db`：已查询词条的小型在线缓存。
 - `/var/lib/vocab/ecdict.db`：完整 ECDICT，可重新下载，但保留可减少部署时间。
 - `/etc/vocab.env`：密钥和邮件配置，应单独安全备份。
 
@@ -202,7 +230,7 @@ sudo systemctl start vocab
 
 用户也可以在“词库管理”页面下载自己的完整 JSON 学习数据备份。
 
-### 6. 后续升级
+### 7. 后续升级
 
 ```bash
 sudo systemctl stop vocab

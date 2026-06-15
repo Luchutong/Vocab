@@ -76,7 +76,10 @@ def test_existing_import_is_review_not_duplicate(app, client, make_user):
         )
 
 
-def test_spelling_failure_returns_suggestions(client, make_user):
+def test_spelling_failure_returns_suggestions(
+    client, make_user, monkeypatch
+):
+    monkeypatch.setattr("dict_query.ONLINE_ENABLED", False)
     user_id = make_user("spelling@tju.edu.cn")
     login_as(client, user_id)
     response = client.post("/api/import/lookup", json={"word": "abandn"})
