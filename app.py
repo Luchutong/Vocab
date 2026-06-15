@@ -27,6 +27,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from answer_matching import check_answer
 from dict_query import download_ecdict, ecdict_status, lookup, suggestions
 from models import (
     get_db,
@@ -211,24 +212,6 @@ def record_review(user_id, word, quality, source="quiz", today=None):
         "repetitions": repetitions,
         "next_review": next_review.isoformat(),
     }
-
-
-def normalize_answer(text):
-    return re.sub(r"[\s，。；、,;.!！？:：()（）]+", "", (text or "").lower())
-
-
-def answer_is_correct(answer, meaning):
-    normalized = normalize_answer(answer)
-    if not normalized:
-        return False
-    parts = re.split(r"[\n；;，,、/]+", meaning or "")
-    candidates = [normalize_answer(part) for part in parts if part.strip()]
-    return any(
-        normalized == item
-        or (len(normalized) >= 2 and normalized in item)
-        or (len(item) >= 2 and item in normalized)
-        for item in candidates
-    )
 
 
 def build_quiz_question(word):
@@ -861,9 +844,14 @@ def register_routes(app):
         variation_details = get_variation_details(
             word["word"], word["pos"]
         )
+        answer_result = check_answer(
+            payload.get("answer", ""), word["meaning"]
+        )
         return jsonify(
-            correct=answer_is_correct(payload.get("answer", ""), word["meaning"]),
+            correct=answer_result["correct"],
             correct_answer=word["meaning"],
+            match_type=answer_result["match_type"],
+            matched_meaning=answer_result["matched_meaning"],
             base_word=word["word"],
             variations=variation_details,
         )

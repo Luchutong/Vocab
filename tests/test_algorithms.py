@@ -3,6 +3,7 @@ from datetime import date
 
 import pytest
 
+from answer_matching import answer_is_correct, check_answer
 from spaced_repetition import SM2Calculator
 import variations
 from variations import get_variation_details, get_variations
@@ -28,6 +29,18 @@ def test_sm2_rejects_invalid_quality_and_spreads_backlog():
     assert sum(allocation.values()) == 65
     assert max(allocation.values()) <= 30
     assert len(allocation) == 3
+
+
+def test_answer_matching_accepts_explicit_synonyms_without_fuzzy_guessing():
+    result = check_answer("稠密的", "密集的；浓厚的")
+    assert result == {
+        "correct": True,
+        "match_type": "synonym",
+        "matched_meaning": "密集的",
+    }
+    assert answer_is_correct("密集", "密集的；浓厚的")
+    assert not answer_is_correct("稀疏的", "密集的；浓厚的")
+    assert not answer_is_correct("浓淡的", "密集的；浓厚的")
 
 
 def test_variations_only_include_verified_dictionary_forms(

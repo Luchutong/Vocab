@@ -71,6 +71,13 @@
     title.textContent = data.correct ? "回答正确" : "再记一下";
     const detail = document.createElement("p");
     detail.textContent = `标准释义：${data.correct_answer}`;
+    const matchDetail = document.createElement("p");
+    if (data.correct && data.match_type === "synonym") {
+      matchDetail.textContent =
+        `已按同义释义判定正确：${answer.value.trim()} ≈ ${data.matched_meaning}`;
+    } else if (data.correct && data.matched_meaning) {
+      matchDetail.textContent = `匹配释义：${data.matched_meaning}`;
+    }
     const forms = document.createElement("div");
     forms.className = "variation-details";
     const formsTitle = document.createElement("strong");
@@ -97,7 +104,9 @@
       empty.textContent = "本地词典未收录其他可靠变形。";
       forms.appendChild(empty);
     }
-    result.append(title, detail, forms);
+    result.append(title);
+    if (matchDetail.textContent) result.appendChild(matchDetail);
+    result.append(detail, forms);
     result.hidden = false;
     panel.hidden = false;
     answer.disabled = true;

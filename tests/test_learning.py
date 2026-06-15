@@ -160,6 +160,33 @@ def test_quiz_check_returns_structured_verified_variations(
     ]
 
 
+def test_quiz_check_explains_synonym_match(app, client, make_user):
+    user_id = make_user("synonym@tju.edu.cn")
+    login_as(client, user_id)
+    with app.app_context():
+        db = get_db()
+        cursor = db.execute(
+            """
+            INSERT INTO words(
+                user_id, word, meaning, pos, date_added, next_review
+            ) VALUES (?, 'dense', '密集的；浓厚的', 'adjective', ?, ?)
+            """,
+            (user_id, date.today().isoformat(), date.today().isoformat()),
+        )
+        db.commit()
+        word_id = cursor.lastrowid
+
+    response = client.post(
+        "/api/quiz/check",
+        json={"word_id": word_id, "answer": "稠密的"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["correct"] is True
+    assert payload["match_type"] == "synonym"
+    assert payload["matched_meaning"] == "密集的"
+
+
 def test_existing_import_is_review_not_duplicate(app, client, make_user):
     user_id = make_user("repeat@tju.edu.cn")
     login_as(client, user_id)
