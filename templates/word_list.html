@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}词库管理 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">个人词库</p>
+    <h1>已学习单词</h1>
+    <p class="muted">按首次学习日期整理，只显示属于你的数据。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button subtle" href="{{ url_for('export_data') }}">下载学习数据备份</a>
+    <a class="button primary" href="{{ url_for('import_words') }}">导入新单词</a>
+  </div>
+</div>
+
+{% for day, words in groups.items() %}
+<section class="word-group">
+  <div class="group-heading"><h2>{{ day }}</h2><span>{{ words|length }} 个</span></div>
+  <div class="word-grid">
+    {% for item in words %}
+    <article class="card word-card">
+      <div class="word-card-head">
+        <div><h3>{{ item.word }}</h3><span>{{ item.phonetic }}</span></div>
+        <span class="pos-tag">{{ item.pos or '未标注' }}</span>
+      </div>
+      <p>{{ item.meaning }}</p>
+      {% if item.example %}<blockquote>{{ item.example }}</blockquote>{% endif %}
+      <div class="word-meta">
+        <span>间隔 {{ item.interval }} 天</span>
+        <span>下次 {{ item.next_review }}</span>
+      </div>
+      <form action="{{ url_for('delete_word', word_id=item.id) }}" method="post" onsubmit="return confirm('确定删除这个单词及其全部复习记录吗？')">
+        <button class="danger-link" type="submit">删除</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<div class="card empty-state large">
+  <h2>词库还是空的</h2>
+  <p>从今天的第一个单词开始吧。</p>
+  <a class="button primary" href="{{ url_for('import_words') }}">去导入单词</a>
+</div>
+{% endfor %}
+{% endblock %}

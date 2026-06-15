@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}请求未完成 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <div class="card auth-card center">
+    <p class="error-code">{{ code }}</p>
+    <h1>请求未完成</h1>
+    <p class="muted">{{ message }}</p>
+    <a class="button primary" href="{{ url_for('dashboard') if current_user and current_user.is_verified else url_for('login') }}">返回安全页面</a>
+  </div>
+</section>
+{% endblock %}

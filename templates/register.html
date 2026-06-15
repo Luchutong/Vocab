@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}注册 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <div class="card auth-card">
+    <p class="eyebrow">创建学习空间</p>
+    <h1>注册账户</h1>
+    <p class="muted">仅支持 <strong>@tju.edu.cn</strong> 邮箱，注册后需要完成邮件验证。</p>
+    <form method="post" class="stack-form">
+      <label for="email">天津大学邮箱</label>
+      <input id="email" name="email" type="email" autocomplete="email" placeholder="学号@tju.edu.cn" required autofocus>
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required>
+      <small>至少 8 位，建议使用独立的长密码。</small>
+      <label for="confirm_password">确认密码</label>
+      <input id="confirm_password" name="confirm_password" type="password" minlength="8" autocomplete="new-password" required>
+      <button class="button primary wide" type="submit">注册并发送验证邮件</button>
+    </form>
+    <div class="auth-links"><a href="{{ url_for('login') }}">已有账户，返回登录</a></div>
+  </div>
+</section>
+{% endblock %}

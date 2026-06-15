@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}导入单词 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">今日单词</p>
+    <h1>输入一个想学习的单词</h1>
+    <p class="muted">第一次回车查询词义，确认无误后再按一次回车导入。</p>
+  </div>
+</div>
+
+<section class="import-layout">
+  <div class="card import-panel">
+    <label class="input-label" for="word-input">英文单词</label>
+    <div class="word-input-wrap">
+      <input id="word-input" class="word-input" type="text" autocomplete="off" spellcheck="false" placeholder="例如：abandon" autofocus>
+      <span id="input-state">按回车查询</span>
+    </div>
+    <p id="status-message" class="status-message" aria-live="polite"></p>
+    <div id="suggestions" class="suggestions" hidden></div>
+
+    <article id="lookup-card" class="lookup-card" hidden>
+      <div>
+        <p class="eyebrow">查询结果</p>
+        <h2 id="result-word"></h2>
+        <p id="result-phonetic" class="phonetic"></p>
+      </div>
+      <span id="result-pos" class="pos-tag"></span>
+      <p id="result-definition" class="definition"></p>
+      <div id="existing-note" class="existing-note" hidden>这个单词已在你的词库中，确认后会记作一次复习。</div>
+      <p class="confirm-hint">再次按回车确认导入</p>
+    </article>
+  </div>
+
+  <aside class="card today-list">
+    <div class="section-title">
+      <div><h2>今日新学</h2><p>首次加入词库的单词</p></div>
+      <strong id="today-count">{{ imported|length }}</strong>
+    </div>
+    <div id="imported-list">
+      {% for item in imported %}
+      <div class="mini-word">
+        <div><strong>{{ item.word }}</strong><span>{{ item.phonetic }}</span></div>
+        <p>{{ item.meaning }}</p>
+      </div>
+      {% else %}
+      <p id="empty-list" class="empty-state">今天还没有导入新单词。</p>
+      {% endfor %}
+    </div>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const input = document.querySelector("#word-input");
+  const state = document.querySelector("#input-state");
+  const status = document.querySelector("#status-message");
+  const card = document.querySelector("#lookup-card");
+  const suggestions = document.querySelector("#suggestions");
+  let phase = "lookup";
+  let token = null;
+  let busy = false;
+
+  function reset(message = "") {
+    phase = "lookup";
+    token = null;
+    card.hidden = true;
+    suggestions.hidden = true;
+    suggestions.innerHTML = "";
+    state.textContent = "按回车查询";
+    status.textContent = message;
+    input.value = "";
+    input.readOnly = false;
+    input.focus();
+  }
+
+  async function queryWord() {
+    const word = input.value.trim();
+    if (!word || busy) return;
+    busy = true;
+    status.className = "status-message";
+    status.textContent = "正在查询词典…";
+    try {
+      const response = await fetch("{{ url_for('api_import_lookup') }}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({word})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        status.className = "status-message error-text";
+        status.textContent = data.error || "查询失败。";
+        card.hidden = true;
+        if (data.suggestions && data.suggestions.length) {
+          suggestions.innerHTML = "<span>你是否想输入：</span>";
+          data.suggestions.forEach(item => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = item;
+            button.addEventListener("click", () => {
+              input.value = item;
+              suggestions.hidden = true;
+              queryWord();
+            });
+            suggestions.appendChild(button);
+          });
+          suggestions.hidden = false;
+        }
+        return;
+      }
+      token = data.token;
+      phase = "confirm";
+      input.value = data.word;
+      input.readOnly = true;
+      document.querySelector("#result-word").textContent = data.word;
+      document.querySelector("#result-phonetic").textContent = data.phonetic ? `[${data.phonetic}]` : "暂无音标";
+      document.querySelector("#result-pos").textContent = data.pos || "未标注词性";
+      document.querySelector("#result-definition").textContent = data.definition;
+      document.querySelector("#existing-note").hidden = !data.existing;
+      card.hidden = false;
+      suggestions.hidden = true;
+      state.textContent = "再按回车确认";
+      status.textContent = "";
+    } catch (error) {
+      status.className = "status-message error-text";
+      status.textContent = "网络请求失败，请稍后重试。";
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function confirmWord() {
+    if (!token || busy) return;
+    busy = true;
+    state.textContent = "正在导入…";
+    try {
+      const response = await fetch("{{ url_for('api_import_confirm') }}", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        reset(data.error || "导入失败，请重新查询。");
+        return;
+      }
+      if (data.created) {
+        document.querySelector("#empty-list")?.remove();
+        const row = document.createElement("div");
+        row.className = "mini-word";
+        const heading = document.createElement("div");
+        const strong = document.createElement("strong");
+        const phonetic = document.createElement("span");
+        const meaning = document.createElement("p");
+        strong.textContent = data.word;
+        phonetic.textContent = data.phonetic || "";
+        meaning.textContent = data.definition;
+        heading.append(strong, phonetic);
+        row.append(heading, meaning);
+        document.querySelector("#imported-list").prepend(row);
+        const count = document.querySelector("#today-count");
+        count.textContent = Number(count.textContent) + 1;
+      }
+      reset(data.message);
+      status.className = "status-message success-text";
+    } catch (error) {
+      reset("网络请求失败，请稍后重试。");
+      status.className = "status-message error-text";
+    } finally {
+      busy = false;
+    }
+  }
+
+  input.addEventListener("input", () => {
+    if (phase === "confirm") {
+      phase = "lookup";
+      token = null;
+      card.hidden = true;
+      state.textContent = "按回车查询";
+    }
+  });
+  input.addEventListener("keydown", event => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    phase === "lookup" ? queryWord() : confirmWord();
+  });
+})();
+</script>
+{% endblock %}

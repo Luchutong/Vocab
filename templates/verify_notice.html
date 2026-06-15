@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}验证邮箱 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <div class="card auth-card center">
+    <div class="mail-mark">邮件</div>
+    <h1>请验证你的邮箱</h1>
+    <p>验证链接已发送至</p>
+    <p class="strong">{{ current_user.email }}</p>
+    <p class="muted">链接将在 24 小时后失效。没有收到时，请检查垃圾邮件或重新发送。</p>
+    <form action="{{ url_for('resend_verification') }}" method="post">
+      <button class="button primary" type="submit">重新发送验证邮件</button>
+    </form>
+    <form action="{{ url_for('logout') }}" method="post">
+      <button class="button subtle" type="submit">换一个账户</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

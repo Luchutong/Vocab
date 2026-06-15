@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}今日测验 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">间隔复习</p>
+    <h1>今日测验</h1>
+    <p class="muted">还有 <strong id="due-count">{{ due_count }}</strong> 个单词等待复习。</p>
+  </div>
+</div>
+
+<section class="card quiz-card">
+  <div id="quiz-complete" class="complete-state" {% if question %}hidden{% endif %}>
+    <div class="complete-mark">完成</div>
+    <h2>今天的复习全部完成！</h2>
+    <p>做得很好，明天再见。</p>
+    <a class="button primary" href="{{ url_for('dashboard') }}">返回仪表盘</a>
+  </div>
+  <div id="quiz-active" {% if not question %}hidden{% endif %}>
+    <p class="muted center">请输入这个单词的中文释义</p>
+    <h2 id="quiz-word" class="quiz-word">{{ question.display if question else '' }}</h2>
+    <input id="quiz-answer" class="quiz-answer" type="text" placeholder="输入中文释义后按回车" autocomplete="off">
+    <button id="check-button" class="button primary wide" type="button">检查答案</button>
+    <div id="answer-result" class="answer-result" hidden></div>
+    <div id="rating-panel" class="rating-panel" hidden>
+      <p>根据真实记忆情况评分：</p>
+      <div class="rating-buttons">
+        <button data-quality="5" class="rating remember">牢记 <small>轻松答对</small></button>
+        <button data-quality="3" class="rating normal">一般 <small>有点犹豫</small></button>
+        <button data-quality="2" class="rating vague">模糊 <small>看到答案想起</small></button>
+        <button data-quality="0" class="rating forgot">遗忘 <small>完全忘记</small></button>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  let currentId = {{ question.id if question else 'null' }};
+  let checking = false;
+  const active = document.querySelector("#quiz-active");
+  const complete = document.querySelector("#quiz-complete");
+  const word = document.querySelector("#quiz-word");
+  const answer = document.querySelector("#quiz-answer");
+  const result = document.querySelector("#answer-result");
+  const panel = document.querySelector("#rating-panel");
+  const checkButton = document.querySelector("#check-button");
+
+  async function checkAnswer() {
+    if (!currentId || !answer.value.trim() || checking) return;
+    checking = true;
+    const response = await fetch("{{ url_for('api_quiz_check') }}", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({word_id: currentId, answer: answer.value})
+    });
+    const data = await response.json();
+    checking = false;
+    if (!response.ok) {
+      result.textContent = data.error || "检查失败。";
+      result.className = "answer-result incorrect";
+      result.hidden = false;
+      return;
+    }
+    result.className = `answer-result ${data.correct ? "correct" : "incorrect"}`;
+    result.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = data.correct ? "回答正确" : "再记一下";
+    const detail = document.createElement("p");
+    detail.textContent = `标准释义：${data.correct_answer}`;
+    const forms = document.createElement("small");
+    forms.textContent = `相关词形：${data.variations.join("、")}`;
+    result.append(title, detail, forms);
+    result.hidden = false;
+    panel.hidden = false;
+    answer.disabled = true;
+    checkButton.disabled = true;
+  }
+
+  async function rate(quality) {
+    panel.querySelectorAll("button").forEach(button => button.disabled = true);
+    const response = await fetch("{{ url_for('submit_quiz') }}", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({word_id: currentId, quality})
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      panel.querySelectorAll("button").forEach(button => button.disabled = false);
+      result.textContent = data.error || "评分保存失败。";
+      return;
+    }
+    if (data.done) {
+      active.hidden = true;
+      complete.hidden = false;
+      document.querySelector("#due-count").textContent = "0";
+      return;
+    }
+    currentId = data.next_word.id;
+    word.textContent = data.next_word.display;
+    answer.value = "";
+    answer.disabled = false;
+    checkButton.disabled = false;
+    result.hidden = true;
+    panel.hidden = true;
+    panel.querySelectorAll("button").forEach(button => button.disabled = false);
+    const count = document.querySelector("#due-count");
+    count.textContent = Math.max(0, Number(count.textContent) - 1);
+    answer.focus();
+  }
+
+  checkButton.addEventListener("click", checkAnswer);
+  answer.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      checkAnswer();
+    }
+  });
+  panel.querySelectorAll("[data-quality]").forEach(button => {
+    button.addEventListener("click", () => rate(Number(button.dataset.quality)));
+  });
+  if (currentId) answer.focus();
+})();
+</script>
+{% endblock %}

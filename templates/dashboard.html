@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}学习仪表盘 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">{{ today.strftime('%Y年%m月%d日') }}</p>
+    <h1>今天也稳稳向前</h1>
+    <p class="muted">复习高风险词，再认识几个新朋友。</p>
+  </div>
+  <a class="button primary" href="{{ url_for('quiz') }}">开始今日复习</a>
+</div>
+
+{% if backlog_notice %}
+<div class="notice">
+  你已中断 {{ backlog_notice.days_interrupted }} 天，积压 {{ backlog_notice.count }} 个单词，
+  已合理分配至未来 {{ backlog_notice.days }} 天。
+</div>
+{% endif %}
+
+<section class="stats-grid">
+  <article class="card stat-card"><span>今日待复习</span><strong>{{ stats.due }}</strong><small>个单词</small></article>
+  <article class="card stat-card"><span>今日已复习</span><strong>{{ stats.reviewed }}</strong><small>次记录</small></article>
+  <article class="card stat-card"><span>今日新学</span><strong>{{ stats.new }}</strong><small>个单词</small></article>
+  <article class="card stat-card"><span>总词库</span><strong>{{ stats.total }}</strong><small>个单词</small></article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="card span-two">
+    <div class="section-title"><div><h2>学习进度</h2><p>按当前间隔与熟练度划分</p></div></div>
+    {% set total = progress.total if progress.total else 1 %}
+    <div class="progress-bar" aria-label="学习进度">
+      <span class="mastered" style="width: {{ progress.mastered * 100 / total }}%"></span>
+      <span class="learning" style="width: {{ progress.learning * 100 / total }}%"></span>
+      <span class="new" style="width: {{ progress.new * 100 / total }}%"></span>
+    </div>
+    <div class="legend">
+      <span><i class="dot mastered"></i>已掌握 {{ progress.mastered }}</span>
+      <span><i class="dot learning"></i>学习中 {{ progress.learning }}</span>
+      <span><i class="dot new"></i>新词 {{ progress.new }}</span>
+    </div>
+  </article>
+
+  <article class="card">
+    <div class="section-title"><div><h2>每日上限</h2><p>积压复习会按此数量分配</p></div></div>
+    <form action="{{ url_for('update_daily_cap') }}" method="post" class="inline-form">
+      <input name="daily_cap" type="number" min="1" max="500" value="{{ daily_cap }}" required>
+      <button class="button primary" type="submit">保存</button>
+    </form>
+  </article>
+
+  <article class="card">
+    <div class="section-title"><div><h2>近 7 天学习</h2><p>颜色越深，复习越多</p></div></div>
+    <div class="heatmap">
+      {% for day in heatmap %}
+      <div class="heat-day">
+        <span class="heat-cell level-{{ [day.count, 4]|min }}" title="{{ day.count }} 次"></span>
+        <small>{{ day.date.strftime('%m/%d') }}</small>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="card span-two">
+    <div class="section-title"><div><h2>未来 7 天复习预测</h2><p>依据当前 SM-2 计划</p></div></div>
+    <div class="forecast">
+      {% for day in forecast %}
+      <div class="forecast-row">
+        <span>{{ '今天' if loop.first else day.date.strftime('%m月%d日') }}</span>
+        <div class="forecast-track"><i style="width: {{ [day.count * 3, 100]|min }}%"></i></div>
+        <strong>{{ day.count }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}

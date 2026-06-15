@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}登录 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <div class="card auth-card">
+    <p class="eyebrow">欢迎回来</p>
+    <h1>登录账户</h1>
+    <p class="muted">使用天津大学邮箱继续你的词汇复习。</p>
+    <form method="post" class="stack-form">
+      <label for="email">邮箱</label>
+      <input id="email" name="email" type="email" autocomplete="email" placeholder="你的邮箱@tju.edu.cn" required autofocus>
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button class="button primary wide" type="submit">登录</button>
+    </form>
+    <div class="auth-links">
+      <a href="{{ url_for('register') }}">注册新账户</a>
+      <a href="{{ url_for('forgot_password') }}">忘记密码</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
