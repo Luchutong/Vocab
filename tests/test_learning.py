@@ -1,6 +1,8 @@
 import json
+import sqlite3
 from datetime import date, timedelta
 
+import variations
 from models import get_db
 from tests.conftest import login_as
 
@@ -100,6 +102,62 @@ def test_import_page_keeps_input_editable(client, make_user):
     assert response.status_code == 200
     assert b"input.readOnly = true" not in response.data
     assert "输入已修改，请按回车重新查询。".encode() in response.data
+
+
+def test_quiz_check_returns_structured_verified_variations(
+    app, client, make_user, monkeypatch, tmp_path
+):
+    dictionary = tmp_path / "ecdict.db"
+    with sqlite3.connect(dictionary) as db:
+        db.execute(
+            """
+            CREATE TABLE stardict (
+                word TEXT, pos TEXT, translation TEXT, exchange TEXT
+            )
+            """
+        )
+        db.executemany(
+            "INSERT INTO stardict VALUES (?, ?, ?, ?)",
+            [
+                (
+                    "quick",
+                    "r:8/j:92",
+                    "a. 快的\nn. 要害",
+                    "s:quicks/r:quicker/t:quickest",
+                ),
+                ("quicks", "", "quick的复数", "0:quick/1:s"),
+                ("quicker", "", "quick的比较级", "0:quick/1:r"),
+                ("quickest", "", "quick的最高级", "0:quick/1:t"),
+            ],
+        )
+    monkeypatch.setattr(variations, "DB_PATH", str(dictionary))
+
+    user_id = make_user("variation@tju.edu.cn")
+    login_as(client, user_id)
+    with app.app_context():
+        db = get_db()
+        cursor = db.execute(
+            """
+            INSERT INTO words(
+                user_id, word, meaning, pos, date_added, next_review
+            ) VALUES (?, 'quick', '快速的', 'noun/adjective', ?, ?)
+            """,
+            (user_id, date.today().isoformat(), date.today().isoformat()),
+        )
+        db.commit()
+        word_id = cursor.lastrowid
+
+    response = client.post(
+        "/api/quiz/check",
+        json={"word_id": word_id, "answer": "快速的"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["base_word"] == "quick"
+    assert payload["variations"] == [
+        {"form": "quicker", "type": "比较级", "code": "r"},
+        {"form": "quickest", "type": "最高级", "code": "t"},
+    ]
 
 
 def test_existing_import_is_review_not_duplicate(app, client, make_user):

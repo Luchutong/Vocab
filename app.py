@@ -36,7 +36,7 @@ from models import (
     set_setting,
 )
 from spaced_repetition import SM2Calculator, reviewed_at_iso
-from variations import get_variations
+from variations import get_variation_details
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -229,6 +229,22 @@ def answer_is_correct(answer, meaning):
         or (len(item) >= 2 and item in normalized)
         for item in candidates
     )
+
+
+def build_quiz_question(word):
+    details = get_variation_details(word["word"], word["pos"])
+    if details and random.random() < 0.3:
+        selected = random.choice(details)
+        return {
+            "id": word["id"],
+            "display": selected["form"],
+            "form_type": selected["type"],
+        }
+    return {
+        "id": word["id"],
+        "display": word["word"],
+        "form_type": "原形",
+    }
 
 
 def rebalance_backlog(user_id):
@@ -821,15 +837,7 @@ def register_routes(app):
         raw_due_count = due_words_count(g.user["id"])
         reviewed_today = quiz_reviews_today(g.user["id"])
         word, cap = get_due_word(g.user["id"])
-        question = None
-        if word:
-            forms = get_variations(word["word"], word["pos"])
-            display = (
-                random.choice(forms[1:])
-                if len(forms) > 1 and random.random() < 0.3
-                else word["word"]
-            )
-            question = {"id": word["id"], "display": display}
+        question = build_quiz_question(word) if word else None
         return render_template(
             "quiz.html",
             due_count=min(raw_due_count, max(0, cap - reviewed_today)),
@@ -850,10 +858,14 @@ def register_routes(app):
         ).fetchone()
         if word is None:
             return jsonify(error="单词不存在或不属于你。"), 404
+        variation_details = get_variation_details(
+            word["word"], word["pos"]
+        )
         return jsonify(
             correct=answer_is_correct(payload.get("answer", ""), word["meaning"]),
             correct_answer=word["meaning"],
-            variations=get_variations(word["word"], word["pos"]),
+            base_word=word["word"],
+            variations=variation_details,
         )
 
     @app.route("/quiz", methods=("POST",))
@@ -879,16 +891,10 @@ def register_routes(app):
         next_word, _cap = get_due_word(g.user["id"])
         if next_word is None:
             return jsonify(done=True, review=review)
-        forms = get_variations(next_word["word"], next_word["pos"])
-        display = (
-            random.choice(forms[1:])
-            if len(forms) > 1 and random.random() < 0.3
-            else next_word["word"]
-        )
         return jsonify(
             done=False,
             review=review,
-            next_word={"id": next_word["id"], "display": display},
+            next_word=build_quiz_question(next_word),
         )
 
     @app.route("/export")

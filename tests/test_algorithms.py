@@ -1,9 +1,11 @@
+import sqlite3
 from datetime import date
 
 import pytest
 
 from spaced_repetition import SM2Calculator
-from variations import get_variations
+import variations
+from variations import get_variation_details, get_variations
 
 
 def test_sm2_success_and_failure_paths():
@@ -28,11 +30,79 @@ def test_sm2_rejects_invalid_quality_and_spreads_backlog():
     assert len(allocation) == 3
 
 
-def test_variations_include_regular_and_irregular_forms():
+def test_variations_only_include_verified_dictionary_forms(
+    monkeypatch, tmp_path
+):
+    db_path = tmp_path / "ecdict.db"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """
+            CREATE TABLE stardict (
+                word TEXT, pos TEXT, translation TEXT, exchange TEXT
+            )
+            """
+        )
+        db.executemany(
+            "INSERT INTO stardict VALUES (?, ?, ?, ?)",
+            [
+                (
+                    "go",
+                    "v:100",
+                    "vi. 去",
+                    "i:going/p:went/d:gone/3:goes/s:goes",
+                ),
+                ("going", "", "go的现在分词", "0:go/1:i"),
+                ("went", "", "go的过去式", "0:go/1:p"),
+                ("gone", "", "go的过去分词", "0:go/1:d"),
+                ("goes", "", "go的第三人称单数", "0:go/1:3"),
+                (
+                    "quick",
+                    "r:8/j:92",
+                    "a. 快的\nadv. 快\nn. 要害",
+                    "s:quicks/r:quicker/t:quickest",
+                ),
+                ("quicks", "", "quick的复数", "0:quick/1:s"),
+                ("quicker", "", "quick的比较级", "0:quick/1:r"),
+                ("quickest", "", "quick的最高级", "0:quick/1:t"),
+                (
+                    "happy",
+                    "j:100",
+                    "a. 快乐的",
+                    "r:happier/t:happiest/s:missing-form",
+                ),
+                ("happier", "", "happy的比较级", "0:happy/1:r"),
+                ("happiest", "", "happy的最高级", "0:happy/1:t"),
+                ("child", "n:100", "n. 孩子", "s:children"),
+                ("children", "", "child的复数", "0:child/1:s"),
+                (
+                    "create",
+                    "v:100",
+                    "vt. 创造",
+                    "d:created/p:created/i:creating/3:creates",
+                ),
+                ("created", "", "create的过去式和过去分词", "0:create"),
+                ("creating", "", "create的现在分词", "0:create"),
+                ("creates", "", "create的第三人称单数", "0:create"),
+            ],
+        )
+    monkeypatch.setattr(variations, "DB_PATH", str(db_path))
+
     assert {"go", "went", "gone", "going", "goes"} <= set(
         get_variations("go", "v")
     )
-    assert {"happy", "happier", "happiest", "happiness"} <= set(
-        get_variations("happy", "adj")
-    )
+    assert get_variations("quick") == ["quick", "quicker", "quickest"]
+    assert "quicks" not in get_variations("quick")
+    assert get_variations("happy") == ["happy", "happier", "happiest"]
+    assert "missing-form" not in get_variations("happy")
     assert "children" in get_variations("child", "n")
+    assert get_variation_details("go") == [
+        {"form": "going", "type": "现在分词", "code": "i"},
+        {"form": "went", "type": "过去式", "code": "p"},
+        {"form": "gone", "type": "过去分词", "code": "d"},
+        {"form": "goes", "type": "第三人称单数", "code": "3"},
+    ]
+    assert get_variation_details("create")[0] == {
+        "form": "created",
+        "type": "过去分词/过去式",
+        "code": "d/p",
+    }

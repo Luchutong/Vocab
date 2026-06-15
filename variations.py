@@ -1,126 +1,142 @@
+import os
 import re
-
-try:
-    from nltk.stem import WordNetLemmatizer
-except ImportError:  # pragma: no cover
-    WordNetLemmatizer = None
+import sqlite3
 
 
-IRREGULAR_VERBS = {
-    "be": ["was", "were", "been", "being", "is"],
-    "go": ["went", "gone", "going", "goes"],
-    "take": ["took", "taken", "taking", "takes"],
-    "write": ["wrote", "written", "writing", "writes"],
-    "do": ["did", "done", "doing", "does"],
-    "have": ["had", "having", "has"],
-    "make": ["made", "making", "makes"],
-    "come": ["came", "coming", "comes"],
-    "see": ["saw", "seen", "seeing", "sees"],
-    "get": ["got", "gotten", "getting", "gets"],
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get(
+    "ECDICT_DATABASE", os.path.join(BASE_DIR, "data", "ecdict.db")
+)
+
+FORM_LABELS = {
+    "p": "过去式",
+    "d": "过去分词",
+    "i": "现在分词",
+    "3": "第三人称单数",
+    "s": "复数",
+    "r": "比较级",
+    "t": "最高级",
 }
-IRREGULAR_ADJECTIVES = {
-    "big": ["bigger", "biggest"],
-    "good": ["better", "best"],
-    "bad": ["worse", "worst"],
-    "little": ["less", "least"],
-    "many": ["more", "most"],
-}
-IRREGULAR_NOUNS = {
-    "child": ["children"],
-    "man": ["men"],
-    "woman": ["women"],
-    "foot": ["feet"],
-    "tooth": ["teeth"],
-    "mouse": ["mice"],
-    "person": ["people"],
-}
-DERIVATIONS = {
-    "beauty": ["beautiful", "beautifully"],
-    "happy": ["happiness", "unhappy", "happily"],
-    "create": ["creation", "creative", "creativity"],
-    "decide": ["decision", "decisive"],
-    "vary": ["variation", "various", "variety"],
-    "analyse": ["analysis", "analytical"],
-    "analyze": ["analysis", "analytical"],
+
+POS_FORM_CODES = {
+    "verb": {"p", "d", "i", "3"},
+    "noun": {"s"},
+    "adjective": {"r", "t"},
 }
 
 
-def _double_final(word):
-    return bool(
-        re.search(r"[^aeiou][aeiou][^aeiouwxy]$", word)
-        and len(word) <= 6
-    )
+def _pos_scores(pos, translation):
+    scores = {"verb": 0, "noun": 0, "adjective": 0}
+    aliases = {
+        "v": "verb",
+        "n": "noun",
+        "j": "adjective",
+        "a": "adjective",
+    }
+    for code, weight in re.findall(r"([a-z]+):(\d+)", pos or "", re.I):
+        category = aliases.get(code.lower())
+        if category:
+            scores[category] = max(scores[category], int(weight))
+
+    if not any(scores.values()):
+        prefixes = re.findall(
+            r"(?:^|[\r\n])\s*(v[ti]?|n|a|adj)\.",
+            translation or "",
+            re.I,
+        )
+        for prefix in prefixes:
+            category = aliases.get(prefix.lower()[0])
+            if category:
+                scores[category] = max(scores[category], 1)
+    return scores
 
 
-def _verb_forms(word):
-    if word in IRREGULAR_VERBS:
-        return IRREGULAR_VERBS[word]
-    if word.endswith("e"):
-        past = word + "d"
-        ing = word[:-1] + "ing"
-    elif word.endswith("y") and word[-2:-1] not in "aeiou":
-        past = word[:-1] + "ied"
-        ing = word + "ing"
-    elif _double_final(word):
-        past = word + word[-1] + "ed"
-        ing = word + word[-1] + "ing"
-    else:
-        past = word + "ed"
-        ing = word + "ing"
-
-    if re.search(r"(s|sh|ch|x|z|o)$", word):
-        third = word + "es"
-    elif word.endswith("y") and word[-2:-1] not in "aeiou":
-        third = word[:-1] + "ies"
-    else:
-        third = word + "s"
-    return [past, past, ing, third]
+def _dominant_categories(pos, translation):
+    scores = _pos_scores(pos, translation)
+    highest = max(scores.values())
+    if highest <= 0:
+        return set()
+    # Minor senses should not produce surprise quiz forms.
+    threshold = max(20, highest * 0.5)
+    return {
+        category
+        for category, score in scores.items()
+        if score >= threshold
+    }
 
 
-def _adjective_forms(word):
-    if word in IRREGULAR_ADJECTIVES:
-        return IRREGULAR_ADJECTIVES[word]
-    if word.endswith("y"):
-        return [word[:-1] + "ier", word[:-1] + "iest"]
-    if word.endswith("e"):
-        return [word + "r", word + "st"]
-    if _double_final(word):
-        return [word + word[-1] + "er", word + word[-1] + "est"]
-    return [word + "er", word + "est"]
+def _parse_exchange(exchange):
+    parsed = []
+    for item in (exchange or "").split("/"):
+        if ":" not in item:
+            continue
+        code, value = item.split(":", 1)
+        code = code.strip()
+        value = value.strip().lower()
+        if code in FORM_LABELS and value:
+            parsed.append((code, value))
+    return parsed
 
 
-def _noun_forms(word):
-    if word in IRREGULAR_NOUNS:
-        return IRREGULAR_NOUNS[word]
-    if re.search(r"(s|sh|ch|x|z)$", word):
-        return [word + "es"]
-    if word.endswith("y") and word[-2:-1] not in "aeiou":
-        return [word[:-1] + "ies"]
-    if word.endswith("f"):
-        return [word[:-1] + "ves"]
-    if word.endswith("fe"):
-        return [word[:-2] + "ves"]
-    return [word + "s"]
+def get_variation_details(word, pos=""):
+    word = (word or "").strip().lower()
+    if not word or not os.path.exists(DB_PATH):
+        return []
+
+    try:
+        with sqlite3.connect(DB_PATH) as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute(
+                """
+                SELECT word, COALESCE(pos, '') AS pos,
+                       COALESCE(translation, '') AS translation,
+                       COALESCE(exchange, '') AS exchange
+                FROM stardict WHERE word=? COLLATE NOCASE LIMIT 1
+                """,
+                (word,),
+            ).fetchone()
+            if not row:
+                return []
+
+            categories = _dominant_categories(
+                row["pos"], row["translation"]
+            )
+            allowed_codes = set()
+            for category in categories:
+                allowed_codes.update(POS_FORM_CODES[category])
+
+            details = []
+            by_form = {}
+            for code, form in _parse_exchange(row["exchange"]):
+                if code not in allowed_codes or form == word:
+                    continue
+                exists = db.execute(
+                    """
+                    SELECT 1 FROM stardict
+                    WHERE word=? COLLATE NOCASE LIMIT 1
+                    """,
+                    (form,),
+                ).fetchone()
+                if not exists:
+                    continue
+                if form in by_form:
+                    item = by_form[form]
+                    item["type"] += "/" + FORM_LABELS[code]
+                    item["code"] += "/" + code
+                    continue
+                item = {
+                    "form": form,
+                    "type": FORM_LABELS[code],
+                    "code": code,
+                }
+                by_form[form] = item
+                details.append(item)
+            return details
+    except sqlite3.Error:
+        return []
 
 
 def get_variations(word, pos=""):
-    word = word.strip().lower()
-    if not word:
-        return []
-    forms = [word]
-    pos_lower = (pos or "").lower()
-    if pos_lower.startswith("v") or "动" in pos_lower:
-        forms.extend(_verb_forms(word))
-    if pos_lower.startswith("adj") or "形" in pos_lower:
-        forms.extend(_adjective_forms(word))
-    if pos_lower.startswith("n") or "名" in pos_lower:
-        forms.extend(_noun_forms(word))
-    forms.extend(DERIVATIONS.get(word, []))
-
-    if WordNetLemmatizer:
-        try:
-            lemma = WordNetLemmatizer().lemmatize(word)
-            forms.append(lemma)
-        except LookupError:
-            pass
-    return list(dict.fromkeys(item for item in forms if item))
+    return [word.strip().lower()] + [
+        item["form"] for item in get_variation_details(word, pos)
+    ]

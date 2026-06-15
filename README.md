@@ -251,6 +251,10 @@ sudo systemctl reload nginx
 完整 ECDICT 词表生成。正常查词不访问网络、不消耗 API 配额，SQLite 精确查询
 通常为毫秒级。
 
+测验中的变形词只读取 ECDICT `exchange` 字段，并同时验证目标词条确实存在。
+系统按原词的主要词性过滤候选，例如形容词 `quick` 只会测试 `quicker` 和
+`quickest`，不会测试罕见名词复数 `quicks`。检查答案后会逐项展示变形类型。
+
 如需在线兜底，将 `ONLINE_DICTIONARY_ENABLED=1` 并配置
 `MERRIAM_WEBSTER_API_KEY`。Key 只能放在服务端环境文件中，不得写入前端、
 源码或 Git。在线服务受第三方额度和使用条款约束。
