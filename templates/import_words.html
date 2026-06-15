@@ -112,7 +112,6 @@
       token = data.token;
       phase = "confirm";
       input.value = data.word;
-      input.readOnly = true;
       document.querySelector("#result-word").textContent = data.word;
       document.querySelector("#result-phonetic").textContent = data.phonetic ? `[${data.phonetic}]` : "暂无音标";
       document.querySelector("#result-pos").textContent = data.pos || "未标注词性";
@@ -177,7 +176,11 @@
       phase = "lookup";
       token = null;
       card.hidden = true;
+      suggestions.hidden = true;
+      suggestions.innerHTML = "";
       state.textContent = "按回车查询";
+      status.className = "status-message";
+      status.textContent = "输入已修改，请按回车重新查询。";
     }
   });
   input.addEventListener("keydown", event => {

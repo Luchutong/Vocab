@@ -45,6 +45,15 @@ def test_import_flow_records_review_and_rejects_token_reuse(
         assert log["source"] == "import"
 
 
+def test_import_page_keeps_input_editable(client, make_user):
+    user_id = make_user("editable@tju.edu.cn")
+    login_as(client, user_id)
+    response = client.get("/import")
+    assert response.status_code == 200
+    assert b"input.readOnly = true" not in response.data
+    assert "输入已修改，请按回车重新查询。".encode() in response.data
+
+
 def test_existing_import_is_review_not_duplicate(app, client, make_user):
     user_id = make_user("repeat@tju.edu.cn")
     login_as(client, user_id)
