@@ -45,6 +45,54 @@ def test_import_flow_records_review_and_rejects_token_reuse(
         assert log["source"] == "import"
 
 
+def test_new_word_is_available_for_same_day_quiz(app, client, make_user):
+    user_id = make_user("same-day@tju.edu.cn")
+    login_as(client, user_id)
+    with app.app_context():
+        db = get_db()
+        db.execute(
+            """
+            UPDATE user_settings SET value='1'
+            WHERE user_id=? AND key='daily_cap'
+            """,
+            (user_id,),
+        )
+        db.commit()
+
+    lookup = client.post(
+        "/api/import/lookup", json={"word": "abandon"}
+    ).get_json()
+    client.post("/api/import/confirm", json={"token": lookup["token"]})
+
+    quiz_page = client.get("/quiz")
+    assert quiz_page.status_code == 200
+    assert "还有 <strong id=\"due-count\">1</strong>".encode() in quiz_page.data
+
+    with app.app_context():
+        word = get_db().execute(
+            "SELECT * FROM words WHERE user_id=? AND word='abandon'",
+            (user_id,),
+        ).fetchone()
+        word_id = word["id"]
+
+    submitted = client.post(
+        "/quiz", json={"word_id": word_id, "quality": 3}
+    )
+    assert submitted.status_code == 200
+    assert submitted.get_json()["done"] is True
+
+    with app.app_context():
+        db = get_db()
+        logs = db.execute(
+            """
+            SELECT source FROM review_log
+            WHERE user_id=? AND word_id=? ORDER BY id
+            """,
+            (user_id, word_id),
+        ).fetchall()
+        assert [row["source"] for row in logs] == ["import", "quiz"]
+
+
 def test_import_page_keeps_input_editable(client, make_user):
     user_id = make_user("editable@tju.edu.cn")
     login_as(client, user_id)

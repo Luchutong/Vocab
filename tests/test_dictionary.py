@@ -1,4 +1,102 @@
+import sqlite3
+
 import dict_query
+
+
+def create_ecdict(path):
+    with sqlite3.connect(path) as db:
+        db.execute(
+            """
+            CREATE TABLE stardict (
+                word TEXT,
+                phonetic TEXT,
+                translation TEXT,
+                pos TEXT,
+                tag TEXT,
+                exchange TEXT,
+                frq INTEGER
+            )
+            """
+        )
+        db.executemany(
+            """
+            INSERT INTO stardict(
+                word, phonetic, translation, pos, tag, exchange, frq
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "elapse",
+                    "i'læps",
+                    "v. （时间）流逝\n过去\nTime to Elapse",
+                    "v:100",
+                    "cet6",
+                    "p:elapsed/d:elapsed/i:elapsing/3:elapses",
+                    9000,
+                ),
+                (
+                    "elapsed",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "0:elapse/1:p",
+                    18000,
+                ),
+                (
+                    "abandon",
+                    "ə'bændən",
+                    "v. 放弃\n抛弃",
+                    "v:100",
+                    "cet4 cet6",
+                    "",
+                    3000,
+                ),
+            ],
+        )
+        db.commit()
+
+
+def test_ecdict_is_primary_and_cleans_local_definition(
+    monkeypatch, tmp_path
+):
+    db_path = tmp_path / "ecdict.db"
+    create_ecdict(db_path)
+    monkeypatch.setattr(dict_query, "DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        dict_query, "CACHE_PATH", str(tmp_path / "dictionary-cache.db")
+    )
+    monkeypatch.setattr(dict_query, "MERRIAM_WEBSTER_API_KEY", "test-key")
+    dict_query._cache_set(
+        "elapse",
+        {"definition": "错误在线释义", "phonetic": "bad", "pos": "noun"},
+        "merriam-webster",
+    )
+
+    def should_not_run(_url):
+        raise AssertionError("online API was called")
+
+    monkeypatch.setattr(dict_query, "_request_json", should_not_run)
+    assert dict_query.lookup("elapse") == {
+        "definition": "（时间）流逝；过去",
+        "phonetic": "i'læps",
+        "pos": "v",
+    }
+    assert dict_query.lookup("elapsed") == {
+        "definition": "（时间）流逝；过去",
+        "phonetic": "i'læps",
+        "pos": "v",
+    }
+
+
+def test_ecdict_provides_local_spelling_suggestions(
+    monkeypatch, tmp_path
+):
+    db_path = tmp_path / "ecdict.db"
+    create_ecdict(db_path)
+    monkeypatch.setattr(dict_query, "DB_PATH", str(db_path))
+    monkeypatch.setattr(dict_query, "ONLINE_ENABLED", False)
+    assert dict_query.suggestions("abandn")[0] == "abandon"
 
 
 def test_online_lookup_is_cached(monkeypatch, tmp_path):
@@ -47,9 +145,10 @@ def test_online_lookup_is_cached(monkeypatch, tmp_path):
     assert len(calls) == 2
 
 
-def test_online_suggestions_and_local_fallback(monkeypatch):
+def test_online_suggestions_and_local_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(dict_query, "ONLINE_ENABLED", True)
     monkeypatch.setattr(dict_query, "MERRIAM_WEBSTER_API_KEY", "")
+    monkeypatch.setattr(dict_query, "DB_PATH", str(tmp_path / "missing.db"))
     monkeypatch.setattr(
         dict_query,
         "_request_json",
@@ -160,6 +259,7 @@ def test_merriam_webster_failure_uses_existing_cache(
     )
     monkeypatch.setattr(dict_query, "ONLINE_ENABLED", True)
     monkeypatch.setattr(dict_query, "MERRIAM_WEBSTER_API_KEY", "test-key")
+    monkeypatch.setattr(dict_query, "DB_PATH", str(tmp_path / "missing.db"))
     cached = {
         "definition": "原缓存",
         "phonetic": "test",

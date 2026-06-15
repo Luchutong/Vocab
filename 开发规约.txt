@@ -28,14 +28,12 @@
 
 ## 3. 词典与拼写检查
 
-- 默认使用轻量在线词典，不要求下载完整词库。
-- 配置 Key 时，Merriam-Webster Learner's Dictionary API 为首选查词来源。
-- Merriam-Webster 负责拼写校验、候选词、音标、词性和学习者英文释义。
-- MyMemory 负责生成中文释义，Datamuse 负责拼写建议。
-- 未配置 Key 或官方服务故障时，DictionaryAPI.dev 与 Datamuse 作为降级来源。
-- 在线结果缓存到小型 SQLite 文件，同一单词后续直接从缓存读取。
-- 网络不可用时自动使用缓存和内置 CET-6 高频词后备库。
-- ECDICT 为可选离线词典，路径为 `data/ecdict.db`。
+- 完整 ECDICT SQLite 数据库为默认主词典，路径为 `data/ecdict.db`。
+- 精确词条未命中时使用 ECDICT `exchange` 字段查询原形。
+- 本地释义去除纯英文行、重复项和冗余词性前缀，并限制展示长度。
+- 拼写建议优先从完整本地词表生成。
+- Merriam-Webster、MyMemory、DictionaryAPI.dev 和 Datamuse 仅作为可选兜底。
+- 正常查询不得依赖网络或消耗在线 API 配额。
 - 提供命令 `flask --app app download-dictionary` 下载完整 ECDICT。
 - 查询返回中文释义、音标和词性。
 - 查询不到时禁止导入，并返回相近拼写候选词。

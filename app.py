@@ -27,7 +27,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from dict_query import download_ecdict, lookup, suggestions
+from dict_query import download_ecdict, ecdict_status, lookup, suggestions
 from models import (
     get_db,
     get_setting,
@@ -284,6 +284,15 @@ def register_routes(app):
         path = download_ecdict()
         print(f"ECDICT 已安装到：{path}")
 
+    @app.cli.command("dictionary-status")
+    def dictionary_status_command():
+        """Show the local ECDICT installation status."""
+        status = ecdict_status()
+        print(f"路径：{status['path']}")
+        print(f"存在：{'是' if status['exists'] else '否'}")
+        print(f"大小：{status['size']} 字节")
+        print(f"词条：{status['entries']}")
+
     @app.before_request
     def load_user():
         user_id = session.get("user_id")
@@ -303,6 +312,38 @@ def register_routes(app):
     @app.context_processor
     def inject_globals():
         return {"current_user": g.user, "today": date.today()}
+
+    def quiz_reviews_today(user_id):
+        return get_db().execute(
+            """
+            SELECT COUNT(*) FROM review_log
+            WHERE user_id=? AND source='quiz'
+              AND substr(reviewed_at, 1, 10)=?
+            """,
+            (user_id, date.today().isoformat()),
+        ).fetchone()[0]
+
+    def due_words_count(user_id):
+        today_value = date.today().isoformat()
+        return get_db().execute(
+            """
+            SELECT COUNT(*) FROM words AS w
+            WHERE w.user_id=? AND (
+                w.next_review<=?
+                OR (
+                    w.date_added=?
+                    AND NOT EXISTS (
+                        SELECT 1 FROM review_log AS r
+                        WHERE r.user_id=w.user_id
+                          AND r.word_id=w.id
+                          AND r.source='quiz'
+                          AND substr(r.reviewed_at, 1, 10)=?
+                    )
+                )
+            )
+            """,
+            (user_id, today_value, today_value, today_value),
+        ).fetchone()[0]
 
     @app.route("/register", methods=("GET", "POST"))
     def register():
@@ -521,12 +562,10 @@ def register_routes(app):
             """,
             (g.user["id"], today_value),
         ).fetchone()[0]
-        raw_due = db.execute(
-            "SELECT COUNT(*) FROM words WHERE user_id=? AND next_review<=?",
-            (g.user["id"], today_value),
-        ).fetchone()[0]
+        quiz_reviewed = quiz_reviews_today(g.user["id"])
+        raw_due = due_words_count(g.user["id"])
         stats = {
-            "due": min(raw_due, max(0, daily_cap - reviewed_today)),
+            "due": min(raw_due, max(0, daily_cap - quiz_reviewed)),
             "reviewed": reviewed_today,
             "new": db.execute(
                 "SELECT COUNT(*) FROM words WHERE user_id=? AND date_added=?",
@@ -704,7 +743,7 @@ def register_routes(app):
             pos=data.get("pos", ""),
             next_review=review["next_review"],
             message=(
-                "单词已导入，并记录为今日复习。"
+                "单词已导入，并已加入今日正式测验。"
                 if created
                 else "该单词已在词库中，已记录为今日复习。"
             ),
@@ -739,42 +778,48 @@ def register_routes(app):
 
     def get_due_word(user_id):
         cap = max(1, int(get_setting(user_id, "daily_cap", "30")))
-        reviewed_today = get_db().execute(
-            """
-            SELECT COUNT(*) FROM review_log
-            WHERE user_id=? AND substr(reviewed_at, 1, 10)=?
-            """,
-            (user_id, date.today().isoformat()),
-        ).fetchone()[0]
+        reviewed_today = quiz_reviews_today(user_id)
         if reviewed_today >= cap:
             return None, cap
+        today_value = date.today().isoformat()
         return get_db().execute(
             """
-            SELECT * FROM words
-            WHERE user_id=? AND next_review<=?
-            ORDER BY ((1.0/ease_factor) * (1+lapses) *
-                     MAX(1, julianday(?) - julianday(next_review))) DESC,
-                     next_review, id
+            SELECT w.* FROM words AS w
+            WHERE w.user_id=? AND (
+                w.next_review<=?
+                OR (
+                    w.date_added=?
+                    AND NOT EXISTS (
+                        SELECT 1 FROM review_log AS r
+                        WHERE r.user_id=w.user_id
+                          AND r.word_id=w.id
+                          AND r.source='quiz'
+                          AND substr(r.reviewed_at, 1, 10)=?
+                    )
+                )
+            )
+            ORDER BY
+                CASE WHEN w.next_review<=? THEN 0 ELSE 1 END,
+                ((1.0/w.ease_factor) * (1+w.lapses) *
+                 MAX(1, julianday(?) - julianday(w.next_review))) DESC,
+                w.next_review, w.id
             LIMIT 1 OFFSET 0
             """,
-            (user_id, date.today().isoformat(), date.today().isoformat()),
+            (
+                user_id,
+                today_value,
+                today_value,
+                today_value,
+                today_value,
+                today_value,
+            ),
         ).fetchone(), cap
 
     @app.route("/quiz")
     @login_required
     def quiz():
-        db = get_db()
-        raw_due_count = db.execute(
-            "SELECT COUNT(*) FROM words WHERE user_id=? AND next_review<=?",
-            (g.user["id"], date.today().isoformat()),
-        ).fetchone()[0]
-        reviewed_today = db.execute(
-            """
-            SELECT COUNT(*) FROM review_log
-            WHERE user_id=? AND substr(reviewed_at, 1, 10)=?
-            """,
-            (g.user["id"], date.today().isoformat()),
-        ).fetchone()[0]
+        raw_due_count = due_words_count(g.user["id"])
+        reviewed_today = quiz_reviews_today(g.user["id"])
         word, cap = get_due_word(g.user["id"])
         question = None
         if word:

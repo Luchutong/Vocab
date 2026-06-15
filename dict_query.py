@@ -2,6 +2,7 @@ import difflib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import time
 import unicodedata
@@ -42,12 +43,24 @@ MERRIAM_WEBSTER_API_URL = os.environ.get(
 MERRIAM_WEBSTER_API_KEY = os.environ.get(
     "MERRIAM_WEBSTER_API_KEY", ""
 ).strip()
-ONLINE_ENABLED = os.environ.get("ONLINE_DICTIONARY_ENABLED", "1") != "0"
+ONLINE_ENABLED = os.environ.get("ONLINE_DICTIONARY_ENABLED", "0") != "0"
 REQUEST_TIMEOUT = float(os.environ.get("DICTIONARY_API_TIMEOUT", "8"))
 USER_AGENT = (
     "VocabBuilder/1.0 (+https://github.com/Luchutong/Vocab)"
 )
 _MERRIAM_SUGGESTIONS = {}
+POS_ORDER = (
+    "v",
+    "n",
+    "adj",
+    "adv",
+    "prep",
+    "conj",
+    "pron",
+    "num",
+    "art",
+    "interj",
+)
 
 # This compact fallback keeps the application useful when the full ECDICT
 # archive is unavailable. Common inflections are handled by variations.py.
@@ -227,6 +240,103 @@ for _line in _FALLBACK_ROWS.splitlines():
 
 def _valid_word(word):
     return bool(re.fullmatch(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", word))
+
+
+def _clean_local_definition(text, max_items=6, max_length=220):
+    items = []
+    for raw in re.split(r"[\r\n]+", text or ""):
+        value = re.sub(r"\s+", " ", raw).strip(" ;；,，")
+        if not value:
+            continue
+        normalized = re.sub(r"^[a-z]{1,10}\.\s*", "", value, flags=re.I)
+        normalized = re.sub(r"\s*[,，;；]\s*", "；", normalized)
+        if (
+            normalized
+            and re.search(r"[\u3400-\u9fff]", normalized)
+            and normalized not in items
+        ):
+            items.append(normalized)
+        if len(items) >= max_items:
+            break
+    result = "；".join(items)
+    if len(result) > max_length:
+        result = result[:max_length].rsplit("；", 1)[0] or result[:max_length]
+    return result
+
+
+def _normalize_local_pos(pos, translation=""):
+    found = []
+    inferred = re.findall(
+        r"(?:^|[\r\n])\s*(v[ti]?|n|a|adj|ad|adv|prep|conj|pron|num|art|interj)\.",
+        translation or "",
+        flags=re.I,
+    )
+    for item in inferred + re.split(r"[/,\s]+", pos or ""):
+        key = item.split(":", 1)[0].strip().lower()
+        aliases = {
+            "a": "adj",
+            "ad": "adv",
+            "adjective": "adj",
+            "d": "adv",
+            "adverb": "adv",
+            "vt": "v",
+            "vi": "v",
+            "verb": "v",
+            "noun": "n",
+        }
+        key = aliases.get(key, key)
+        if key in POS_ORDER and key not in found:
+            found.append(key)
+    return "/".join(sorted(found, key=POS_ORDER.index))
+
+
+def _lemma_from_exchange(exchange):
+    for item in (exchange or "").split("/"):
+        if item.startswith("0:"):
+            lemma = item[2:].strip().lower()
+            if _valid_word(lemma):
+                return lemma
+    return None
+
+
+def _ecdict_row(db, word):
+    db.row_factory = sqlite3.Row
+    return db.execute(
+        """
+        SELECT word, COALESCE(translation, '') AS translation,
+               COALESCE(phonetic, '') AS phonetic,
+               COALESCE(pos, '') AS pos,
+               COALESCE(tag, '') AS tag,
+               COALESCE(exchange, '') AS exchange
+        FROM stardict WHERE word=? COLLATE NOCASE
+        LIMIT 1
+        """,
+        (word,),
+    ).fetchone()
+
+
+def _ecdict_lookup(word):
+    if not os.path.exists(DB_PATH):
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as db:
+            row = _ecdict_row(db, word)
+            if row and not row["translation"]:
+                lemma = _lemma_from_exchange(row["exchange"])
+                if lemma and lemma != word:
+                    row = _ecdict_row(db, lemma)
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    definition = _clean_local_definition(row["translation"])
+    if not definition:
+        return None
+    return {
+        "definition": definition,
+        "phonetic": row["phonetic"].strip().strip("/"),
+        "pos": _normalize_local_pos(row["pos"], row["translation"]),
+    }
 
 
 def _request_json(url):
@@ -486,6 +596,11 @@ def lookup(word):
     word = (word or "").strip().lower()
     if not _valid_word(word):
         return None
+
+    local = _ecdict_lookup(word)
+    if local:
+        return local
+
     cached = _cache_get(word)
     if cached and (
         not (ONLINE_ENABLED and MERRIAM_WEBSTER_API_KEY)
@@ -515,27 +630,6 @@ def lookup(word):
     if cached:
         cached.pop("_source", None)
         return cached
-    if os.path.exists(DB_PATH):
-        try:
-            with sqlite3.connect(DB_PATH) as db:
-                row = db.execute(
-                    """
-                    SELECT translation, COALESCE(phonetic, ''),
-                           COALESCE(pos, '')
-                    FROM stardict WHERE word=? COLLATE NOCASE
-                    """,
-                    (word,),
-                ).fetchone()
-            if row and row[0]:
-                result = {
-                    "definition": row[0].strip(),
-                    "phonetic": row[1].strip(),
-                    "pos": row[2].strip(),
-                }
-                _cache_set(word, result, "ecdict")
-                return result
-        except sqlite3.Error:
-            pass
     result = FALLBACK.get(word)
     if result:
         result = dict(result)
@@ -560,16 +654,18 @@ def lookup(word):
 
 def suggestions(word, limit=5):
     word = (word or "").strip().lower()
-    merriam_matches = _MERRIAM_SUGGESTIONS.pop(word, [])
-    if merriam_matches:
-        return merriam_matches[:limit]
     candidates = set(FALLBACK)
     if os.path.exists(DB_PATH) and _valid_word(word):
         try:
             with sqlite3.connect(DB_PATH) as db:
                 rows = db.execute(
-                    "SELECT word FROM stardict WHERE word LIKE ? LIMIT 500",
-                    (word[:1] + "%",),
+                    """
+                    SELECT word FROM stardict
+                    WHERE word LIKE ? COLLATE NOCASE
+                    ORDER BY COALESCE(frq, 999999), word
+                    LIMIT 1000
+                    """,
+                    (word[: max(1, min(2, len(word)))] + "%",),
                 ).fetchall()
             candidates.update(row[0].lower() for row in rows)
         except sqlite3.Error:
@@ -577,6 +673,12 @@ def suggestions(word, limit=5):
     local_matches = difflib.get_close_matches(
         word, candidates, n=limit, cutoff=0.65
     )
+    merriam_matches = _MERRIAM_SUGGESTIONS.pop(word, [])
+    matches = list(dict.fromkeys(local_matches + merriam_matches))
+    if merriam_matches:
+        return matches[:limit]
+    if len(matches) >= limit:
+        return matches[:limit]
     if ONLINE_ENABLED and _valid_word(word):
         try:
             query = urllib.parse.urlencode({"s": word, "max": limit * 2})
@@ -588,7 +690,7 @@ def suggestions(word, limit=5):
                 and _valid_word(row.get("word", ""))
                 and row.get("word", "").lower() != word
             ]
-            return list(dict.fromkeys(online_matches + local_matches))[:limit]
+            return list(dict.fromkeys(matches + online_matches))[:limit]
         except (
             OSError,
             ValueError,
@@ -597,7 +699,7 @@ def suggestions(word, limit=5):
             urllib.error.HTTPError,
         ):
             pass
-    return local_matches
+    return matches
 
 
 def download_ecdict(force=False):
@@ -608,12 +710,43 @@ def download_ecdict(force=False):
     if os.path.exists(DB_PATH) and not force:
         return DB_PATH
     archive = os.path.join(DATA_DIR, "ecdict.zip")
-    urllib.request.urlretrieve(ARCHIVE_URL, archive)
-    with zipfile.ZipFile(archive) as zipped:
-        member = next(
-            name for name in zipped.namelist() if name.endswith("stardict.db")
-        )
-        with zipped.open(member) as source, open(DB_PATH, "wb") as target:
-            target.write(source.read())
-    os.remove(archive)
+    temporary = DB_PATH + ".tmp"
+    try:
+        if not zipfile.is_zipfile(archive):
+            urllib.request.urlretrieve(ARCHIVE_URL, archive)
+        with zipfile.ZipFile(archive) as zipped:
+            member = next(
+                name
+                for name in zipped.namelist()
+                if name.endswith("stardict.db")
+            )
+            with zipped.open(member) as source, open(temporary, "wb") as target:
+                shutil.copyfileobj(source, target)
+        with sqlite3.connect(temporary) as db:
+            count = db.execute("SELECT COUNT(*) FROM stardict").fetchone()[0]
+            if count < 100000:
+                raise RuntimeError("ECDICT 数据库词条数量异常")
+        os.replace(temporary, DB_PATH)
+    finally:
+        for path in (archive, temporary):
+            if os.path.exists(path):
+                os.remove(path)
     return DB_PATH
+
+
+def ecdict_status():
+    status = {
+        "path": DB_PATH,
+        "exists": os.path.exists(DB_PATH),
+        "size": os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0,
+        "entries": 0,
+    }
+    if status["exists"]:
+        try:
+            with sqlite3.connect(DB_PATH) as db:
+                status["entries"] = db.execute(
+                    "SELECT COUNT(*) FROM stardict"
+                ).fetchone()[0]
+        except sqlite3.Error:
+            status["entries"] = -1
+    return status

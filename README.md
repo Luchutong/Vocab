@@ -26,7 +26,7 @@ python app.py
 | --- | --- | --- |
 | `SECRET_KEY` | 是 | Session 和签名令牌密钥，生产环境必须使用随机长字符串 |
 | `DATABASE` | 建议 | SQLite 数据库路径，默认 `data/vocab.db` |
-| `ECDICT_DATABASE` | 建议 | 完整 ECDICT 数据库路径，默认 `data/ecdict.db` |
+| `ECDICT_DATABASE` | 是 | 完整 ECDICT 数据库路径，默认 `data/ecdict.db` |
 | `SMTP_HOST` | 是 | SMTP 服务器地址 |
 | `SMTP_PORT` | 是 | SMTP 端口，STARTTLS 通常使用 `587` |
 | `SMTP_USERNAME` | 视服务而定 | SMTP 用户名 |
@@ -35,11 +35,11 @@ python app.py
 | `SMTP_USE_TLS` | 兼容项 | 未设置 `SMTP_SECURITY` 时，`1` 使用 STARTTLS，`0` 使用普通 SMTP |
 | `MAIL_FROM` | 是 | 验证和重置邮件的发件人地址 |
 | `TRUST_PROXY` | 反向代理时 | 通过 Nginx 部署时设为 `1`，使外部链接使用正确域名和 HTTPS |
-| `ONLINE_DICTIONARY_ENABLED` | 否 | `1` 启用在线词典，`0` 仅使用本地数据，默认 `1` |
+| `ONLINE_DICTIONARY_ENABLED` | 否 | `1` 启用在线兜底，`0` 仅使用本地数据，推荐 `0` |
 | `DICTIONARY_CACHE_DATABASE` | 建议 | 在线词典缓存路径，默认 `data/dictionary-cache.db` |
 | `DICTIONARY_API_TIMEOUT` | 否 | 单次在线词典请求超时秒数，默认 `8` |
 | `MYMEMORY_EMAIL` | 否 | 提交给 MyMemory 的联系邮箱，可提高免费额度；不设置则不发送 |
-| `MERRIAM_WEBSTER_API_KEY` | 建议 | Merriam-Webster Learner's Dictionary API Key，首选查词来源 |
+| `MERRIAM_WEBSTER_API_KEY` | 否 | 在线兜底使用的 Learner's Dictionary API Key |
 
 邮件服务未配置或发送失败时，注册账户仍会保留，用户可以稍后重新发送。
 
@@ -85,14 +85,25 @@ sudo install -d -o vocab -g vocab -m 750 /var/lib/vocab
 sudo chown -R vocab:vocab /opt/vocab
 ```
 
-如需完整 ECDICT，可执行：
+安装完整 ECDICT：
 
 ```bash
 sudo -u vocab ECDICT_DATABASE=/var/lib/vocab/ecdict.db \
   /opt/vocab/venv/bin/flask --app /opt/vocab/app.py download-dictionary
 ```
 
-应用自带离线高频词后备库，因此完整词典下载失败不会阻止服务启动。
+官方 SQLite 压缩包约 217 MB，解压后的数据库约 851 MB，安装时建议至少预留
+1.2 GB 可用空间。词典文件不进入 Git，应保存在 `/var/lib/vocab` 等持久化目录。
+应用仍有小型高频词后备库，但生产环境应确认完整词典安装成功：
+
+```bash
+sqlite3 /var/lib/vocab/ecdict.db \
+  "SELECT COUNT(*) FROM stardict;"
+
+# 或使用应用自带诊断命令
+sudo -u vocab ECDICT_DATABASE=/var/lib/vocab/ecdict.db \
+  /opt/vocab/venv/bin/flask --app /opt/vocab/app.py dictionary-status
+```
 
 ### 2. 配置密钥和邮件
 
@@ -109,9 +120,9 @@ SECRET_KEY=替换为上一步生成的随机字符串
 DATABASE=/var/lib/vocab/vocab.db
 ECDICT_DATABASE=/var/lib/vocab/ecdict.db
 DICTIONARY_CACHE_DATABASE=/var/lib/vocab/dictionary-cache.db
-ONLINE_DICTIONARY_ENABLED=1
+ONLINE_DICTIONARY_ENABLED=0
 DICTIONARY_API_TIMEOUT=8
-MERRIAM_WEBSTER_API_KEY=替换为你的Learner词典API密钥
+MERRIAM_WEBSTER_API_KEY=
 SMTP_HOST=smtp.tju.edu.cn
 SMTP_PORT=465
 SMTP_USERNAME=你的邮箱@tju.edu.cn
@@ -226,28 +237,23 @@ sudo systemctl reload nginx
 公网部署应使用 Certbot 或其他方式启用 HTTPS。邮箱验证链接会依据请求的
 域名和协议生成，因此生产环境必须通过正式域名访问。
 
-### 5. 在线词典与轻量部署
+### 5. 本地词典
 
-默认无需下载完整 ECDICT。配置 `MERRIAM_WEBSTER_API_KEY` 后，系统按以下
+完整 [ECDICT](https://github.com/skywind3000/ECDICT) 是默认主词典。系统按以下
 顺序查询：
 
-1. Merriam-Webster 查询缓存。
-2. Merriam-Webster Learner's Dictionary 校验拼写并获取音标、词性和学习者释义。
-3. MyMemory 将释义转换为中文。
-4. API 暂时故障时退回旧缓存、可选 ECDICT 和内置高频词库。
-5. 未配置 Key 时使用 DictionaryAPI.dev 和 Datamuse 免费接口。
+1. ECDICT 精确词条。
+2. 通过 ECDICT `exchange` 字段还原原形后查询。
+3. 内置高频词后备库。
+4. 可选在线 API 兜底。
 
-拼写错误时优先采用 Merriam-Webster 原生候选词，且不会为同一次输入重复请求。
-成功查询会写入 `dictionary-cache.db`，同一单词以后直接使用缓存。Key 只能放在
-服务端 `.env` 或 `/etc/vocab.env` 中，不得写入前端、源码或 Git。
+本地释义会去除纯英文行、重复项和词性前缀，并限制卡片长度。拼写建议优先从
+完整 ECDICT 词表生成。正常查词不访问网络、不消耗 API 配额，SQLite 精确查询
+通常为毫秒级。
 
-Merriam-Webster API 受其订阅额度和使用条款约束。降级服务受第三方可用性和
-免费额度约束。项目文档对
-[Merriam-Webster](https://www.dictionaryapi.com/products/api-learners-dictionary)、
-[DictionaryAPI.dev](https://dictionaryapi.dev/)、
-[MyMemory](https://mymemory.translated.net/doc/spec.php) 和
-[Datamuse](https://www.datamuse.com/api/) 表示感谢。若不希望服务器访问第三方
-服务，将 `ONLINE_DICTIONARY_ENABLED=0`，并安装完整 ECDICT。
+如需在线兜底，将 `ONLINE_DICTIONARY_ENABLED=1` 并配置
+`MERRIAM_WEBSTER_API_KEY`。Key 只能放在服务端环境文件中，不得写入前端、
+源码或 Git。在线服务受第三方额度和使用条款约束。
 
 ### 6. 数据持久化和自动备份
 
