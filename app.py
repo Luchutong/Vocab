@@ -851,7 +851,10 @@ def register_routes(app):
             (g.user["id"],),
         ).fetchall()
         return render_template(
-            "agent_access.html", tokens=tokens, new_token=new_token
+            "agent_access.html",
+            tokens=tokens,
+            new_token=new_token,
+            api_base_url=request.url_root.rstrip("/"),
         )
 
     @app.route("/agent-access/<int:token_id>/revoke", methods=("POST",))

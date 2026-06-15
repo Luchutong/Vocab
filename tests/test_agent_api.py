@@ -16,6 +16,7 @@ def create_agent_token(app, client, user_id, name="测试 Agent"):
     match = TOKEN_RE.search(response.data)
     assert match
     token = match.group(1).decode()
+    assert response.data.count(token.encode()) == 1
     with app.app_context():
         row = get_db().execute(
             "SELECT * FROM agent_tokens WHERE user_id=?", (user_id,)
@@ -23,6 +24,29 @@ def create_agent_token(app, client, user_id, name="测试 Agent"):
         assert row["token_hash"] == hash_agent_token(token)
         assert token not in tuple(row)
     return token
+
+
+def test_agent_access_page_contains_complete_configuration_guide(
+    client, make_user
+):
+    user_id = make_user("agent-docs@tju.edu.cn")
+    login_as(client, user_id)
+    response = client.get("/agent-access")
+    assert response.status_code == 200
+    for expected in (
+        "创建个人 Token",
+        "直接调用 HTTP API",
+        "配置 stdio MCP",
+        "验证配置",
+        "常见问题",
+        "requirements-mcp.txt",
+        "VOCAB_API_URL=http://localhost",
+        "VOCAB_API_TOKEN=vocab_替换为页面生成的Token",
+        "import_words",
+        "Idempotency-Key",
+        "不要通过公网 HTTP 发送 Token",
+    ):
+        assert expected.encode() in response.data
 
 
 def agent_headers(token, key=None):
