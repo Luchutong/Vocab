@@ -221,6 +221,15 @@ input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(57,197,18
 .word-card blockquote { margin: 12px 0; padding-left: 12px; color: var(--muted); border-left: 3px solid var(--primary); }
 .word-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: .75rem; }
 .word-card form { position: absolute; right: 22px; bottom: 17px; }
+.agent-access-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
+.agent-access-grid pre { overflow-x: auto; padding: 14px; border-radius: 12px; background: #f3f8f8; line-height: 1.55; }
+.token-reveal { margin-bottom: 18px; border-color: var(--primary); }
+.token-value { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: #f3f8f8; }
+.token-value code { min-width: 0; overflow-wrap: anywhere; }
+.token-list { margin-top: 18px; }
+.token-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 0; border-top: 1px solid var(--line); }
+.token-row:first-of-type { border-top: 0; }
+.token-row code, .token-row small { display: block; margin-top: 5px; color: var(--muted); }
 .danger-link { padding: 0; color: var(--danger); border: 0; background: transparent; font-size: .78rem; }
 .error-code { margin: 0; color: var(--primary); font-size: 4rem; font-weight: 900; }
 
@@ -252,7 +261,7 @@ input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(57,197,18
   .page-shell { width: min(100% - 22px, 1180px); padding-top: 28px; }
   .page-heading { align-items: stretch; flex-direction: column; }
   .heading-actions { display: grid; }
-  .stats-grid, .word-grid { grid-template-columns: 1fr; }
+  .stats-grid, .word-grid, .agent-access-grid { grid-template-columns: 1fr; }
   .card { padding: 20px; border-radius: 15px; }
   .rating-buttons { grid-template-columns: repeat(2, 1fr); }
   .auth-links { align-items: start; flex-direction: column; }

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Agent 接口 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">自动化导入</p>
+    <h1>Agent 接口</h1>
+    <p class="muted">创建个人 Token，让受信任的 Agent 将单词加入你当天的正式测验。</p>
+  </div>
+  <a class="button subtle" href="{{ url_for('word_list') }}">返回词库管理</a>
+</div>
+
+{% if new_token %}
+<section class="card token-reveal">
+  <h2>请立即保存这个 Token</h2>
+  <p class="muted">出于安全考虑，页面关闭后不会再次显示明文。不要发送给他人，也不要提交到 Git。</p>
+  <div class="token-value">
+    <code id="new-agent-token">{{ new_token }}</code>
+    <button class="button subtle" id="copy-agent-token" type="button">复制</button>
+  </div>
+</section>
+{% endif %}
+
+<div class="agent-access-grid">
+  <section class="card">
+    <h2>创建 Token</h2>
+    <form method="post" class="stack-form">
+      <label for="token-name">用途名称</label>
+      <input id="token-name" name="name" maxlength="50" placeholder="例如：本机 Codex" required>
+      <button class="button primary" type="submit">生成个人 Token</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>调用接口</h2>
+    <p><code>POST /api/agent/import</code></p>
+    <pre><code>Authorization: Bearer vocab_...
+Content-Type: application/json
+Idempotency-Key: 任意唯一请求编号
+
+{"words":["abandon","dense","elapse"]}</code></pre>
+    <p class="muted">单次最多 100 个。所有单词由服务端词典校验，成功项会记录一次导入复习并进入当天正式测验。</p>
+  </section>
+</div>
+
+<section class="card token-list">
+  <h2>有效 Token</h2>
+  {% for token in tokens %}
+  <div class="token-row">
+    <div>
+      <strong>{{ token.name }}</strong>
+      <code>{{ token.token_prefix }}...</code>
+      <small>创建：{{ token.created_at }}{% if token.last_used_at %} · 最近使用：{{ token.last_used_at }}{% endif %}</small>
+    </div>
+    <form action="{{ url_for('revoke_agent_token', token_id=token.id) }}" method="post" onsubmit="return confirm('撤销后，使用这个 Token 的 Agent 将立即无法导入。确定继续吗？')">
+      <button class="danger-link" type="submit">撤销</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="muted">尚未创建 Agent Token。</p>
+  {% endfor %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  const copyButton = document.querySelector("#copy-agent-token");
+  const token = document.querySelector("#new-agent-token");
+  if (copyButton && token) {
+    copyButton.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(token.textContent);
+      copyButton.textContent = "已复制";
+    });
+  }
+</script>
+{% endblock %}

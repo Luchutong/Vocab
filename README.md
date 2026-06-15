@@ -1,7 +1,7 @@
 # 六级词汇复习系统
 
 面向天津大学用户的多账户 CET-6 词汇学习网站。支持邮箱验证、词典查词、
-拼写建议、SM-2 间隔复习、学习统计和个人 JSON 数据备份。
+拼写建议、SM-2 间隔复习、Agent 批量导入、学习统计和个人 JSON 数据备份。
 
 ## 本地启动
 
@@ -294,7 +294,92 @@ sudo systemctl start vocab
 
 用户也可以在“词库管理”页面下载自己的完整 JSON 学习数据备份。
 
-### 7. 后续升级
+### 7. Agent 导入接口
+
+用户可在“词库管理”进入“Agent 接口”，创建个人 Token。Token 明文只显示一次，
+数据库仅保存 SHA-256 摘要；不用时应立即在页面撤销。调用必须使用 HTTPS：
+
+```bash
+curl https://你的域名/api/agent/import \
+  -H "Authorization: Bearer $VOCAB_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(cat /proc/sys/kernel/random/uuid)" \
+  --data '{"words":["abandon","dense","elapse"]}'
+```
+
+接口规则：
+
+- `words` 必须是数组，单次最多 100 个，批内重复项只处理一次。
+- 所有词条由服务端 ECDICT 校验，Agent 不能自行提交或伪造释义。
+- 查询失败的项目会出现在 `failed` 中，不影响其他有效项目导入。
+- 新词和已有词都会记录一次 `quality=3`、来源为 `agent_import` 的复习，并进入
+  当天正式测验。
+- 可传 `Idempotency-Key`。同一用户以相同 Key 重试时返回第一次结果，不重复写入。
+- Token 仅能访问所属用户的词库，已撤销或未验证账户会返回 `401`。
+
+生产环境建议在 Nginx 的 `http` 块声明限流区：
+
+```nginx
+limit_req_zone $binary_remote_addr zone=vocab_agent:10m rate=10r/m;
+```
+
+并在站点的 `server` 块中为接口单独添加：
+
+```nginx
+location = /api/agent/import {
+    limit_req zone=vocab_agent burst=5 nodelay;
+    proxy_pass http://127.0.0.1:6657;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+#### MCP 工具
+
+仓库中的 `mcp_server.py` 是本地 stdio MCP 适配器。它不直接读取数据库，而是
+通过上述 HTTPS API 导入，因此可以运行在 Agent 所在电脑上。
+
+```bash
+cd /path/to/Vocab
+python3 -m venv venv-mcp
+venv-mcp/bin/pip install -r requirements-mcp.txt
+mkdir -p ~/.config
+cat > ~/.config/vocab-mcp.env <<'EOF'
+VOCAB_API_URL=https://你的域名
+VOCAB_API_TOKEN=vocab_替换为页面生成的Token
+VOCAB_API_TIMEOUT=30
+EOF
+chmod 600 ~/.config/vocab-mcp.env
+```
+
+在支持 stdio MCP 的 Agent 中添加服务器。通用配置示例：
+
+```json
+{
+  "mcpServers": {
+    "vocab-builder": {
+      "command": "/bin/bash",
+      "args": [
+        "-lc",
+        "set -a; source ~/.config/vocab-mcp.env; exec /path/to/Vocab/venv-mcp/bin/python /path/to/Vocab/mcp_server.py"
+      ]
+    }
+  }
+}
+```
+
+连接后 Agent 会获得 `import_words` 工具，参数示例：
+
+```json
+{"words":["abandon","dense","elapse"]}
+```
+
+不要把 `VOCAB_API_TOKEN` 写进仓库、聊天提示词或公开的 MCP 配置。服务器地址应
+使用正式 HTTPS 域名，不建议通过公网明文 HTTP 传输 Bearer Token。
+
+### 8. 后续升级
 
 ```bash
 sudo systemctl stop vocab

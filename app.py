@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import random
 import re
@@ -43,6 +44,9 @@ from variations import get_variation_details
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@tju\.edu\.cn$")
 WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'][A-Za-z]+)*$")
+IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+AGENT_IMPORT_LIMIT = 100
+AGENT_IMPORT_MAX_BODY = 64 * 1024
 
 
 def create_app(test_config=None):
@@ -98,6 +102,41 @@ def login_required(view):
         if not g.user["is_verified"]:
             flash("请先完成邮箱验证。", "warning")
             return redirect(url_for("verify_notice"))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def hash_agent_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def agent_token_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        authorization = request.headers.get("Authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        if (
+            not separator
+            or scheme.lower() != "bearer"
+            or not token.strip()
+        ):
+            return jsonify(
+                ok=False,
+                error="请使用 Authorization: Bearer <token> 进行认证。",
+            ), 401
+        row = get_db().execute(
+            """
+            SELECT t.id AS token_id, u.id, u.email, u.is_verified
+            FROM agent_tokens AS t
+            JOIN users AS u ON u.id=t.user_id
+            WHERE t.token_hash=? AND t.revoked_at IS NULL
+            """,
+            (hash_agent_token(token.strip()),),
+        ).fetchone()
+        if row is None or not row["is_verified"]:
+            return jsonify(ok=False, error="Agent Token 无效或已撤销。"), 401
+        g.agent_user = row
         return view(*args, **kwargs)
 
     return wrapped
@@ -211,6 +250,45 @@ def record_review(user_id, word, quality, source="quiz", today=None):
         "interval": interval,
         "repetitions": repetitions,
         "next_review": next_review.isoformat(),
+    }
+
+
+def import_word_for_user(user_id, word_text, dictionary_entry, source):
+    db = get_db()
+    word = db.execute(
+        "SELECT * FROM words WHERE user_id=? AND word=?",
+        (user_id, word_text),
+    ).fetchone()
+    created = word is None
+    if created:
+        cursor = db.execute(
+            """
+            INSERT INTO words(
+                user_id, word, meaning, phonetic, pos, date_added,
+                next_review
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                word_text,
+                dictionary_entry["definition"],
+                dictionary_entry.get("phonetic", ""),
+                dictionary_entry.get("pos", ""),
+                date.today().isoformat(),
+                date.today().isoformat(),
+            ),
+        )
+        word = db.execute(
+            "SELECT * FROM words WHERE id=?", (cursor.lastrowid,)
+        ).fetchone()
+    review = record_review(user_id, word, 3, source=source)
+    return {
+        "created": created,
+        "word": word_text,
+        "definition": dictionary_entry["definition"],
+        "phonetic": dictionary_entry.get("phonetic", ""),
+        "pos": dictionary_entry.get("pos", ""),
+        "next_review": review["next_review"],
     }
 
 
@@ -330,7 +408,16 @@ def register_routes(app):
             WHERE w.user_id=? AND (
                 w.next_review<=?
                 OR (
-                    w.date_added=?
+                    (
+                        w.date_added=?
+                        OR EXISTS (
+                            SELECT 1 FROM review_log AS imported
+                            WHERE imported.user_id=w.user_id
+                              AND imported.word_id=w.id
+                              AND imported.source IN ('import', 'agent_import')
+                              AND substr(imported.reviewed_at, 1, 10)=?
+                        )
+                    )
                     AND NOT EXISTS (
                         SELECT 1 FROM review_log AS r
                         WHERE r.user_id=w.user_id
@@ -341,7 +428,13 @@ def register_routes(app):
                 )
             )
             """,
-            (user_id, today_value, today_value, today_value),
+            (
+                user_id,
+                today_value,
+                today_value,
+                today_value,
+                today_value,
+            ),
         ).fetchone()[0]
 
     @app.route("/register", methods=("GET", "POST"))
@@ -704,49 +797,223 @@ def register_routes(app):
         ):
             return jsonify(ok=False, error="该查询结果已使用或不属于你。"), 400
 
-        db = get_db()
-        word = db.execute(
-            "SELECT * FROM words WHERE user_id=? AND word=?",
-            (g.user["id"], data["word"]),
-        ).fetchone()
-        created = word is None
-        if created:
-            cursor = db.execute(
-                """
-                INSERT INTO words(
-                    user_id, word, meaning, phonetic, pos, date_added,
-                    next_review
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    g.user["id"],
-                    data["word"],
-                    data["definition"],
-                    data.get("phonetic", ""),
-                    data.get("pos", ""),
-                    date.today().isoformat(),
-                    date.today().isoformat(),
-                ),
-            )
-            word = db.execute(
-                "SELECT * FROM words WHERE id=?", (cursor.lastrowid,)
-            ).fetchone()
-        review = record_review(g.user["id"], word, 3, source="import")
-        db.commit()
+        imported = import_word_for_user(
+            g.user["id"], data["word"], data, source="import"
+        )
+        get_db().commit()
         return jsonify(
             ok=True,
-            created=created,
-            word=data["word"],
-            definition=data["definition"],
-            phonetic=data.get("phonetic", ""),
-            pos=data.get("pos", ""),
-            next_review=review["next_review"],
+            **imported,
             message=(
                 "单词已导入，并已加入今日正式测验。"
-                if created
-                else "该单词已在词库中，已记录为今日复习。"
+                if imported["created"]
+                else "该单词已在词库中，并已加入今日正式测验。"
             ),
         )
+
+    @app.route("/agent-access", methods=("GET", "POST"))
+    @login_required
+    def agent_access():
+        new_token = None
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            if not name:
+                flash("请填写 Token 名称。", "error")
+            elif len(name) > 50:
+                flash("Token 名称不能超过 50 个字符。", "error")
+            else:
+                raw_token = "vocab_" + secrets.token_urlsafe(32)
+                get_db().execute(
+                    """
+                    INSERT INTO agent_tokens(
+                        user_id, name, token_hash, token_prefix, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        g.user["id"],
+                        name,
+                        hash_agent_token(raw_token),
+                        raw_token[:14],
+                        datetime.now().astimezone().isoformat(
+                            timespec="seconds"
+                        ),
+                    ),
+                )
+                get_db().commit()
+                new_token = raw_token
+        tokens = get_db().execute(
+            """
+            SELECT id, name, token_prefix, created_at, last_used_at
+            FROM agent_tokens
+            WHERE user_id=? AND revoked_at IS NULL
+            ORDER BY id DESC
+            """,
+            (g.user["id"],),
+        ).fetchall()
+        return render_template(
+            "agent_access.html", tokens=tokens, new_token=new_token
+        )
+
+    @app.route("/agent-access/<int:token_id>/revoke", methods=("POST",))
+    @login_required
+    def revoke_agent_token(token_id):
+        cursor = get_db().execute(
+            """
+            UPDATE agent_tokens SET revoked_at=?
+            WHERE id=? AND user_id=? AND revoked_at IS NULL
+            """,
+            (
+                datetime.now().astimezone().isoformat(timespec="seconds"),
+                token_id,
+                g.user["id"],
+            ),
+        )
+        get_db().commit()
+        flash(
+            "Agent Token 已撤销。" if cursor.rowcount else "未找到该 Token。",
+            "success",
+        )
+        return redirect(url_for("agent_access"))
+
+    @app.route("/api/agent/import", methods=("POST",))
+    @agent_token_required
+    def api_agent_import():
+        if (
+            request.content_length is not None
+            and request.content_length > AGENT_IMPORT_MAX_BODY
+        ):
+            return jsonify(
+                ok=False, error="请求体过大，最大允许 64 KiB。"
+            ), 413
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify(ok=False, error="请求体必须是 JSON 对象。"), 400
+        words = payload.get("words")
+        if not isinstance(words, list) or not words:
+            return jsonify(
+                ok=False, error="words 必须是非空字符串数组。"
+            ), 400
+        if len(words) > AGENT_IMPORT_LIMIT:
+            return jsonify(
+                ok=False,
+                error=f"单次最多导入 {AGENT_IMPORT_LIMIT} 个单词。",
+            ), 400
+
+        idempotency_key = request.headers.get(
+            "Idempotency-Key", ""
+        ).strip()
+        if idempotency_key and not IDEMPOTENCY_KEY_RE.fullmatch(
+            idempotency_key
+        ):
+            return jsonify(
+                ok=False,
+                error="Idempotency-Key 格式无效或超过 128 个字符。",
+            ), 400
+        db = get_db()
+        if idempotency_key:
+            previous = db.execute(
+                """
+                SELECT response_json FROM agent_import_requests
+                WHERE user_id=? AND idempotency_key=?
+                """,
+                (g.agent_user["id"], idempotency_key),
+            ).fetchone()
+            if previous:
+                response = jsonify(json.loads(previous["response_json"]))
+                response.headers["Idempotency-Replayed"] = "true"
+                return response
+
+        normalized_words = []
+        seen = set()
+        failed = []
+        for index, value in enumerate(words):
+            if not isinstance(value, str):
+                failed.append(
+                    {
+                        "input": value,
+                        "index": index,
+                        "error": "单词必须是字符串。",
+                    }
+                )
+                continue
+            word = value.strip().lower()
+            if not WORD_RE.fullmatch(word):
+                failed.append(
+                    {
+                        "input": value,
+                        "index": index,
+                        "error": "格式无效，只能包含字母、连字符或撇号。",
+                    }
+                )
+                continue
+            if word not in seen:
+                normalized_words.append(word)
+                seen.add(word)
+
+        imported = []
+        for word in normalized_words:
+            result = lookup(word)
+            if result is None:
+                failed.append(
+                    {
+                        "input": word,
+                        "error": "词典中未找到该单词。",
+                        "suggestions": suggestions(word),
+                    }
+                )
+                continue
+            imported.append(
+                import_word_for_user(
+                    g.agent_user["id"],
+                    word,
+                    result,
+                    source="agent_import",
+                )
+            )
+
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        retention_boundary = (
+            datetime.now().astimezone() - timedelta(days=7)
+        ).isoformat(timespec="seconds")
+        result_payload = {
+            "ok": not failed,
+            "imported_count": len(imported),
+            "failed_count": len(failed),
+            "imported": imported,
+            "failed": failed,
+            "message": (
+                f"已将 {len(imported)} 个单词加入今日正式测验。"
+                if imported
+                else "没有单词被导入。"
+            ),
+        }
+        if idempotency_key:
+            db.execute(
+                """
+                INSERT INTO agent_import_requests(
+                    user_id, idempotency_key, response_json, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    g.agent_user["id"],
+                    idempotency_key,
+                    json.dumps(result_payload, ensure_ascii=False),
+                    now,
+                ),
+            )
+        db.execute(
+            "UPDATE agent_tokens SET last_used_at=? WHERE id=?",
+            (now, g.agent_user["token_id"]),
+        )
+        db.execute(
+            """
+            DELETE FROM agent_import_requests
+            WHERE user_id=? AND created_at<?
+            """,
+            (g.agent_user["id"], retention_boundary),
+        )
+        db.commit()
+        return jsonify(result_payload)
 
     @app.route("/words")
     @login_required
@@ -787,7 +1054,16 @@ def register_routes(app):
             WHERE w.user_id=? AND (
                 w.next_review<=?
                 OR (
-                    w.date_added=?
+                    (
+                        w.date_added=?
+                        OR EXISTS (
+                            SELECT 1 FROM review_log AS imported
+                            WHERE imported.user_id=w.user_id
+                              AND imported.word_id=w.id
+                              AND imported.source IN ('import', 'agent_import')
+                              AND substr(imported.reviewed_at, 1, 10)=?
+                        )
+                    )
                     AND NOT EXISTS (
                         SELECT 1 FROM review_log AS r
                         WHERE r.user_id=w.user_id
@@ -806,6 +1082,7 @@ def register_routes(app):
             """,
             (
                 user_id,
+                today_value,
                 today_value,
                 today_value,
                 today_value,

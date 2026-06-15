@@ -57,11 +57,36 @@ CREATE TABLE IF NOT EXISTS user_settings (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS agent_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agent_import_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (user_id, idempotency_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_words_due
 ON words(user_id, next_review);
 
 CREATE INDEX IF NOT EXISTS idx_review_user_time
 ON review_log(user_id, reviewed_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tokens_user
+ON agent_tokens(user_id, revoked_at);
 """
 
 
