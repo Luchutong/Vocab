@@ -301,7 +301,7 @@ sudo systemctl start vocab
 
 ```bash
 curl https://你的域名/api/agent/import \
-  -H "Authorization: Bearer $VOCAB_API_TOKEN" \
+  -H "Authorization: Bearer vocab_替换为页面生成的Token" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(cat /proc/sys/kernel/random/uuid)" \
   --data '{"words":["abandon","dense","elapse"]}'
@@ -336,48 +336,9 @@ location = /api/agent/import {
 }
 ```
 
-#### MCP 工具
-
-仓库中的 `mcp_server.py` 是本地 stdio MCP 适配器。它不直接读取数据库，而是
-通过上述 HTTPS API 导入，因此可以运行在 Agent 所在电脑上。
-
-```bash
-cd /path/to/Vocab
-python3 -m venv venv-mcp
-venv-mcp/bin/pip install -r requirements-mcp.txt
-mkdir -p ~/.config
-cat > ~/.config/vocab-mcp.env <<'EOF'
-VOCAB_API_URL=https://你的域名
-VOCAB_API_TOKEN=vocab_替换为页面生成的Token
-VOCAB_API_TIMEOUT=30
-EOF
-chmod 600 ~/.config/vocab-mcp.env
-```
-
-在支持 stdio MCP 的 Agent 中添加服务器。通用配置示例：
-
-```json
-{
-  "mcpServers": {
-    "vocab-builder": {
-      "command": "/bin/bash",
-      "args": [
-        "-lc",
-        "set -a; source ~/.config/vocab-mcp.env; exec /path/to/Vocab/venv-mcp/bin/python /path/to/Vocab/mcp_server.py"
-      ]
-    }
-  }
-}
-```
-
-连接后 Agent 会获得 `import_words` 工具，参数示例：
-
-```json
-{"words":["abandon","dense","elapse"]}
-```
-
-不要把 `VOCAB_API_TOKEN` 写进仓库、聊天提示词或公开的 MCP 配置。服务器地址应
-使用正式 HTTPS 域名，不建议通过公网明文 HTTP 传输 Bearer Token。
+无需下载仓库、安装虚拟环境或配置 MCP。将 curl 命令中的 Token 和 `words`
+数组交给 Agent 执行即可。不要把 Token 写进仓库、聊天提示词或公开配置；服务器
+地址应使用正式 HTTPS 域名，不建议通过公网明文 HTTP 传输 Bearer Token。
 
 ### 8. 后续升级
 

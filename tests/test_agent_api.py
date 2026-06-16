@@ -35,18 +35,23 @@ def test_agent_access_page_contains_complete_configuration_guide(
     assert response.status_code == 200
     for expected in (
         "创建个人 Token",
-        "直接调用 HTTP API",
-        "配置 stdio MCP",
-        "验证配置",
+        "复制 curl 请求",
+        "查看返回结果",
         "常见问题",
-        "requirements-mcp.txt",
-        "VOCAB_API_URL=http://localhost",
-        "VOCAB_API_TOKEN=vocab_替换为页面生成的Token",
-        "import_words",
+        "不需要下载仓库、安装依赖或配置 MCP",
+        "curl 'http://localhost/api/agent/import'",
+        "Authorization: Bearer vocab_替换为页面生成的Token",
         "Idempotency-Key",
         "不要通过公网 HTTP 发送 Token",
     ):
         assert expected.encode() in response.data
+    for removed in (
+        "requirements-mcp.txt",
+        "venv-mcp",
+        "mcp_server.py",
+        "VOCAB_API_TOKEN",
+    ):
+        assert removed.encode() not in response.data
 
 
 def agent_headers(token, key=None):
