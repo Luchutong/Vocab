@@ -46,7 +46,7 @@ from models import (
     set_setting,
 )
 from spaced_repetition import SM2Calculator, reviewed_at_iso
-from variations import get_variation_details
+from variations import get_variation_context, get_variation_details
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -383,6 +383,19 @@ def source_payload_for_word(word):
 
 def build_quiz_question(word):
     source = source_payload_for_word(word)
+    variation_context = get_variation_context(word["word"])
+    if variation_context["base_word"] != word["word"]:
+        form_type = (
+            f"{variation_context['current_form_type']}"
+            f"（原形 {variation_context['base_word']}）"
+        )
+        return {
+            "id": word["id"],
+            "display": word["word"],
+            "form_type": form_type,
+            **source,
+        }
+
     details = get_variation_details(word["word"], word["pos"])
     if details and random.random() < 0.3:
         selected = random.choice(details)
@@ -1397,9 +1410,7 @@ def register_routes(app):
         ).fetchone()
         if word is None:
             return jsonify(error="单词不存在或不属于你。"), 404
-        variation_details = get_variation_details(
-            word["word"], word["pos"]
-        )
+        variation_context = get_variation_context(word["word"])
         answer_result = check_answer(
             payload.get("answer", ""), word["meaning"]
         )
@@ -1408,8 +1419,8 @@ def register_routes(app):
             correct_answer=word["meaning"],
             match_type=answer_result["match_type"],
             matched_meaning=answer_result["matched_meaning"],
-            base_word=word["word"],
-            variations=variation_details,
+            base_word=variation_context["base_word"],
+            variations=variation_context["variations"],
             **source_payload_for_word(word),
         )
 

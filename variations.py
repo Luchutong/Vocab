@@ -78,6 +78,125 @@ def _parse_exchange(exchange):
     return parsed
 
 
+def _combine_form_types(codes):
+    return "/".join(FORM_LABELS[code] for code in codes if code in FORM_LABELS)
+
+
+def _verified_variation_details(db, row):
+    categories = _dominant_categories(row["pos"], row["translation"])
+    allowed_codes = set()
+    for category in categories:
+        allowed_codes.update(POS_FORM_CODES[category])
+
+    details = []
+    by_form = {}
+    for code, form in _parse_exchange(row["exchange"]):
+        if code not in allowed_codes or form == row["word"].lower():
+            continue
+        exists = db.execute(
+            """
+            SELECT 1 FROM stardict
+            WHERE word=? COLLATE NOCASE LIMIT 1
+            """,
+            (form,),
+        ).fetchone()
+        if not exists:
+            continue
+        if form in by_form:
+            item = by_form[form]
+            item["type"] += "/" + FORM_LABELS[code]
+            item["code"] += "/" + code
+            continue
+        item = {
+            "form": form,
+            "type": FORM_LABELS[code],
+            "code": code,
+        }
+        by_form[form] = item
+        details.append(item)
+    return details
+
+
+def _row_for_word(db, word):
+    return db.execute(
+        """
+        SELECT LOWER(word) AS word, COALESCE(pos, '') AS pos,
+               COALESCE(translation, '') AS translation,
+               COALESCE(exchange, '') AS exchange
+        FROM stardict WHERE word=? COLLATE NOCASE LIMIT 1
+        """,
+        (word,),
+    ).fetchone()
+
+
+def get_word_form_details(word):
+    word = (word or "").strip().lower()
+    if not word or not os.path.exists(DB_PATH):
+        return {"base_word": word, "form": word, "type": "原形", "code": ""}
+
+    try:
+        with sqlite3.connect(DB_PATH) as db:
+            db.row_factory = sqlite3.Row
+            row = _row_for_word(db, word)
+            if not row:
+                return {
+                    "base_word": word,
+                    "form": word,
+                    "type": "原形",
+                    "code": "",
+                }
+
+            parts = {
+                code.strip(): value.strip().lower()
+                for code, value in (
+                    item.split(":", 1)
+                    for item in (row["exchange"] or "").split("/")
+                    if ":" in item
+                )
+                if value.strip()
+            }
+            base_word = parts.get("0", "")
+            if not base_word or base_word == word:
+                return {
+                    "base_word": word,
+                    "form": word,
+                    "type": "原形",
+                    "code": "",
+                }
+
+            base_row = _row_for_word(db, base_word)
+            if not base_row:
+                return {
+                    "base_word": word,
+                    "form": word,
+                    "type": "原形",
+                    "code": "",
+                }
+
+            matched = [
+                item
+                for item in _verified_variation_details(db, base_row)
+                if item["form"] == word
+            ]
+            if not matched:
+                return {
+                    "base_word": word,
+                    "form": word,
+                    "type": "原形",
+                    "code": "",
+                }
+            return {
+                "base_word": base_word,
+                "form": word,
+                "type": _combine_form_types(
+                    matched[0]["code"].split("/")
+                ),
+                "code": matched[0]["code"],
+            }
+    except sqlite3.Error:
+        return {"base_word": word, "form": word, "type": "原形", "code": ""}
+
+
 def get_variation_details(word, pos=""):
     word = (word or "").strip().lower()
     if not word or not os.path.exists(DB_PATH):
@@ -86,54 +205,25 @@ def get_variation_details(word, pos=""):
     try:
         with sqlite3.connect(DB_PATH) as db:
             db.row_factory = sqlite3.Row
-            row = db.execute(
-                """
-                SELECT word, COALESCE(pos, '') AS pos,
-                       COALESCE(translation, '') AS translation,
-                       COALESCE(exchange, '') AS exchange
-                FROM stardict WHERE word=? COLLATE NOCASE LIMIT 1
-                """,
-                (word,),
-            ).fetchone()
+            row = _row_for_word(db, word)
             if not row:
                 return []
 
-            categories = _dominant_categories(
-                row["pos"], row["translation"]
-            )
-            allowed_codes = set()
-            for category in categories:
-                allowed_codes.update(POS_FORM_CODES[category])
-
-            details = []
-            by_form = {}
-            for code, form in _parse_exchange(row["exchange"]):
-                if code not in allowed_codes or form == word:
-                    continue
-                exists = db.execute(
-                    """
-                    SELECT 1 FROM stardict
-                    WHERE word=? COLLATE NOCASE LIMIT 1
-                    """,
-                    (form,),
-                ).fetchone()
-                if not exists:
-                    continue
-                if form in by_form:
-                    item = by_form[form]
-                    item["type"] += "/" + FORM_LABELS[code]
-                    item["code"] += "/" + code
-                    continue
-                item = {
-                    "form": form,
-                    "type": FORM_LABELS[code],
-                    "code": code,
-                }
-                by_form[form] = item
-                details.append(item)
-            return details
+            return _verified_variation_details(db, row)
     except sqlite3.Error:
         return []
+
+
+def get_variation_context(word):
+    form_details = get_word_form_details(word)
+    base_word = form_details["base_word"]
+    variations = get_variation_details(base_word)
+    return {
+        "base_word": base_word,
+        "current_form": form_details["form"],
+        "current_form_type": form_details["type"],
+        "variations": variations,
+    }
 
 
 def get_variations(word, pos=""):

@@ -6,7 +6,12 @@ import pytest
 from answer_matching import answer_is_correct, check_answer
 from spaced_repetition import SM2Calculator
 import variations
-from variations import get_variation_details, get_variations
+from variations import (
+    get_variation_context,
+    get_variation_details,
+    get_variations,
+    get_word_form_details,
+)
 
 
 def test_sm2_success_and_failure_paths():
@@ -87,6 +92,8 @@ def test_variations_only_include_verified_dictionary_forms(
                 ("happiest", "", "happy的最高级", "0:happy/1:t"),
                 ("child", "n:100", "n. 孩子", "s:children"),
                 ("children", "", "child的复数", "0:child/1:s"),
+                ("property", "n:100", "n. 性质", "s:properties"),
+                ("properties", "", "property的复数形式", "0:property/1:s"),
                 (
                     "create",
                     "v:100",
@@ -108,6 +115,26 @@ def test_variations_only_include_verified_dictionary_forms(
     assert get_variations("happy") == ["happy", "happier", "happiest"]
     assert "missing-form" not in get_variations("happy")
     assert "children" in get_variations("child", "n")
+    assert get_word_form_details("properties") == {
+        "base_word": "property",
+        "form": "properties",
+        "type": "复数",
+        "code": "s",
+    }
+    assert get_word_form_details("quicks") == {
+        "base_word": "quicks",
+        "form": "quicks",
+        "type": "原形",
+        "code": "",
+    }
+    assert get_variation_context("properties") == {
+        "base_word": "property",
+        "current_form": "properties",
+        "current_form_type": "复数",
+        "variations": [
+            {"form": "properties", "type": "复数", "code": "s"}
+        ],
+    }
     assert get_variation_details("go") == [
         {"form": "going", "type": "现在分词", "code": "i"},
         {"form": "went", "type": "过去式", "code": "p"},

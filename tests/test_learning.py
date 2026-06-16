@@ -165,6 +165,58 @@ def test_quiz_check_returns_structured_verified_variations(
     ]
 
 
+def test_quiz_marks_imported_inflected_word_with_real_base_form(
+    app, client, make_user, monkeypatch, tmp_path
+):
+    dictionary = tmp_path / "ecdict.db"
+    with sqlite3.connect(dictionary) as db:
+        db.execute(
+            """
+            CREATE TABLE stardict (
+                word TEXT, pos TEXT, translation TEXT, exchange TEXT
+            )
+            """
+        )
+        db.executemany(
+            "INSERT INTO stardict VALUES (?, ?, ?, ?)",
+            [
+                ("property", "n:100", "n. 性质", "s:properties"),
+                ("properties", "", "property的复数形式", "0:property/1:s"),
+            ],
+        )
+    monkeypatch.setattr(variations, "DB_PATH", str(dictionary))
+
+    user_id = make_user("inflected@tju.edu.cn")
+    login_as(client, user_id)
+    with app.app_context():
+        db = get_db()
+        cursor = db.execute(
+            """
+            INSERT INTO words(
+                user_id, word, meaning, pos, date_added, next_review
+            ) VALUES (?, 'properties', '性质；道具', 'noun', ?, ?)
+            """,
+            (user_id, date.today().isoformat(), date.today().isoformat()),
+        )
+        db.commit()
+        word_id = cursor.lastrowid
+
+    quiz_page = client.get("/quiz")
+    assert "复数（原形 property）".encode() in quiz_page.data
+    assert "原形 properties".encode() not in quiz_page.data
+
+    response = client.post(
+        "/api/quiz/check",
+        json={"word_id": word_id, "answer": "性质"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["base_word"] == "property"
+    assert payload["variations"] == [
+        {"form": "properties", "type": "复数", "code": "s"}
+    ]
+
+
 def test_quiz_check_explains_synonym_match(app, client, make_user):
     user_id = make_user("synonym@tju.edu.cn")
     login_as(client, user_id)
