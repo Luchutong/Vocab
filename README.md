@@ -264,19 +264,26 @@ sudo systemctl reload nginx
 
 ### 6. 资料广场
 
-“资料广场”读取 `MATERIALS_DIR` 中的文本型 PDF。应用启动时会自动扫描
+“资料广场”读取 `MATERIALS_DIR` 中的文本型 PDF。应用启动时会递归扫描
 `*.pdf`；配置 `ADMIN_EMAILS` 后，管理员也可以在资料广场点击
 “重新扫描资料目录”动态入库，无需重启网站。扫描过程使用 PyMuPDF 提取整卷文本，
 并按文件内容 SHA-256 去重写入
 `materials` 表。扫描版 PDF 或无法提取足够英文文本的文件会被跳过并记录日志，
 不会影响网站启动。
 
-本仓库不提交真题 PDF。部署时将资料单独上传到服务器：
+资料广场按目录生成分类夹。直接放在 `MATERIALS_DIR` 根目录下的 PDF 会归入
+“真题”；放入子目录的 PDF 会以子目录名作为分类，例如
+`/var/lib/vocab/materials/听力原文/*.pdf` 会显示在“听力原文”分类中。
+
+本仓库不提交资料 PDF。部署时将资料单独上传到服务器：
 
 ```bash
 sudo install -d -o vocab -g vocab -m 750 /var/lib/vocab/materials
+sudo install -d -o vocab -g vocab -m 750 /var/lib/vocab/materials/听力原文
 sudo cp 2025年12月英语六级真题*.pdf /var/lib/vocab/materials/
+sudo cp 听力原文*.pdf /var/lib/vocab/materials/听力原文/
 sudo chown vocab:vocab /var/lib/vocab/materials/*.pdf
+sudo chown -R vocab:vocab /var/lib/vocab/materials/听力原文
 ```
 
 确保 `.env` 中包含管理员邮箱：

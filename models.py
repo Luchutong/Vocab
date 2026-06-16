@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS agent_import_requests (
 
 CREATE TABLE IF NOT EXISTS materials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL DEFAULT '真题',
     title TEXT NOT NULL,
     file_name TEXT NOT NULL UNIQUE,
     file_hash TEXT NOT NULL UNIQUE,
@@ -103,6 +104,7 @@ ON agent_tokens(user_id, revoked_at);
 
 CREATE INDEX IF NOT EXISTS idx_materials_published
 ON materials(is_published, updated_at);
+
 """
 
 
@@ -127,7 +129,28 @@ def close_db(_error=None):
 def init_db():
     db = get_db()
     db.executescript(SCHEMA)
+    ensure_column(
+        db,
+        "materials",
+        "category",
+        "ALTER TABLE materials ADD COLUMN category TEXT NOT NULL DEFAULT '真题'",
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_materials_category
+        ON materials(category, is_published, updated_at)
+        """
+    )
     db.commit()
+
+
+def ensure_column(db, table, column, statement):
+    columns = {
+        row["name"]
+        for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        db.execute(statement)
 
 
 def init_user_settings(user_id):

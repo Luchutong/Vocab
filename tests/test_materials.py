@@ -42,6 +42,7 @@ def test_materials_auto_import_from_pdf_and_updates(tmp_path):
         rows = db.execute("SELECT * FROM materials").fetchall()
         assert len(rows) == 1
         assert rows[0]["title"] == "sample"
+        assert rows[0]["category"] == "真题"
         assert rows[0]["page_count"] == 1
         assert rows[0]["word_count"] >= 10
 
@@ -62,6 +63,32 @@ def test_materials_auto_import_from_pdf_and_updates(tmp_path):
         assert db.execute("SELECT COUNT(*) FROM materials").fetchone()[0] == 1
         content = db.execute("SELECT content FROM materials").fetchone()[0]
         assert "resilient" in content
+
+
+def test_materials_auto_import_uses_subdirectories_as_categories(tmp_path):
+    materials_dir = tmp_path / "materials"
+    listening_dir = materials_dir / "听力原文"
+    listening_dir.mkdir(parents=True)
+    write_pdf(
+        listening_dir / "listening.pdf",
+        "Students listen to conversations and review unfamiliar words. "
+        "Careful learners compare scripts, repeat sentences, and collect "
+        "useful expressions for later vocabulary practice every evening.",
+    )
+    app = create_app(
+        {
+            "TESTING": True,
+            "SECRET_KEY": "test-secret",
+            "DATABASE": str(tmp_path / "test.db"),
+            "MATERIALS_DIR": str(materials_dir),
+            "MATERIALS_AUTO_IMPORT": True,
+            "SMTP_HOST": "",
+        }
+    )
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM materials").fetchone()
+        assert row["category"] == "听力原文"
+        assert row["file_name"] == "听力原文/listening.pdf"
 
 
 def test_empty_material_square_and_auth(app, client, make_user):

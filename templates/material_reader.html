@@ -194,6 +194,12 @@
   });
   importButton.addEventListener("click", importCurrentWord);
   closeButton.addEventListener("click", () => popover.hidden = true);
+  document.addEventListener("click", event => {
+    if (popover.hidden) return;
+    if (popover.contains(event.target)) return;
+    if (event.target.closest(".pdf-word-hit")) return;
+    popover.hidden = true;
+  });
   document.addEventListener("keydown", event => {
     if (event.key === "Escape") popover.hidden = true;
   });

@@ -5,7 +5,7 @@
   <div>
     <p class="eyebrow">阅读选词</p>
     <h1>资料广场</h1>
-    <p class="muted">从平台预置真题中阅读选词，点击陌生词即可查看释义并加入今日测验。</p>
+    <p class="muted">从平台资料中阅读选词，点击陌生词即可查看释义并加入今日测验。</p>
   </div>
   {% if current_user_is_admin %}
   <form action="{{ url_for('admin_materials_resync') }}" method="post">
@@ -15,18 +15,31 @@
 </div>
 
 {% if materials %}
-<section class="material-grid">
-  {% for item in materials %}
-  <article class="card material-card">
-    <p class="eyebrow">六级真题</p>
-    <h2>{{ item.title }}</h2>
-    <p class="muted">{{ item.file_name }}</p>
-    <div class="material-meta">
-      <span>{{ item.page_count }} 页</span>
-      <span>{{ item.word_count }} 词</span>
-      <span>更新 {{ item.updated_at[:10] }}</span>
+<section class="material-folders">
+  {% for group in category_groups %}
+  <article class="material-category card">
+    <div class="material-category-head">
+      <div>
+        <p class="eyebrow">资料分类</p>
+        <h2>{{ group.category }}</h2>
+      </div>
+      <span>{{ group.materials|length }} 份资料</span>
     </div>
-    <a class="button primary" href="{{ url_for('material_reader', material_id=item.id) }}">开始阅读</a>
+    <div class="material-grid">
+      {% for item in group.materials %}
+      <article class="material-card">
+        <p class="eyebrow">{{ item.category }}</p>
+        <h3>{{ item.title }}</h3>
+        <p class="muted">{{ item.file_name }}</p>
+        <div class="material-meta">
+          <span>{{ item.page_count }} 页</span>
+          <span>{{ item.word_count }} 词</span>
+          <span>更新 {{ item.updated_at[:10] }}</span>
+        </div>
+        <a class="button primary" href="{{ url_for('material_reader', material_id=item.id) }}">开始阅读</a>
+      </article>
+      {% endfor %}
+    </div>
   </article>
   {% endfor %}
 </section>

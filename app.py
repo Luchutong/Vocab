@@ -783,13 +783,29 @@ def register_routes(app):
     def material_square():
         rows = get_db().execute(
             """
-            SELECT id, title, file_name, page_count, word_count, updated_at
+            SELECT
+                id, category, title, file_name, page_count, word_count,
+                updated_at
             FROM materials
             WHERE is_published=1
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY category COLLATE NOCASE, updated_at DESC, id DESC
             """
         ).fetchall()
-        return render_template("materials.html", materials=rows)
+        category_groups = []
+        for row in rows:
+            if (
+                not category_groups
+                or category_groups[-1]["category"] != row["category"]
+            ):
+                category_groups.append(
+                    {"category": row["category"], "materials": []}
+                )
+            category_groups[-1]["materials"].append(row)
+        return render_template(
+            "materials.html",
+            materials=rows,
+            category_groups=category_groups,
+        )
 
     @app.route("/admin/materials/resync", methods=("POST",))
     @login_required

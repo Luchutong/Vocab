@@ -12,6 +12,7 @@ from models import get_db
 
 WORD_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*")
 MIN_EXTRACTED_WORDS = 20
+DEFAULT_MATERIAL_CATEGORY = "真题"
 
 
 def material_word_count(text):
@@ -134,8 +135,16 @@ def _file_hash(path):
     return digest.hexdigest()
 
 
-def import_material_pdf(path):
-    file_name = os.path.basename(path)
+def material_category_from_relative_path(relative_path):
+    parent = Path(relative_path).parent
+    if str(parent) == ".":
+        return DEFAULT_MATERIAL_CATEGORY
+    return " / ".join(parent.parts)
+
+
+def import_material_pdf(path, file_name=None, category=None):
+    file_name = file_name or os.path.basename(path)
+    category = category or DEFAULT_MATERIAL_CATEGORY
     file_hash = _file_hash(path)
     content, page_count = extract_pdf_text(path)
     word_count = material_word_count(content)
@@ -158,15 +167,24 @@ def import_material_pdf(path):
     title = material_title_from_filename(path)
     if existing:
         if existing["file_hash"] == file_hash:
+            db.execute(
+                """
+                UPDATE materials
+                SET category=?
+                WHERE id=? AND category<>?
+                """,
+                (category, existing["id"], category),
+            )
             return "unchanged"
         db.execute(
             """
             UPDATE materials
-            SET title=?, file_hash=?, page_count=?, word_count=?, content=?,
-                is_published=?, updated_at=?
+            SET category=?, title=?, file_hash=?, page_count=?, word_count=?,
+                content=?, is_published=?, updated_at=?
             WHERE id=?
             """,
             (
+                category,
                 title,
                 file_hash,
                 page_count,
@@ -182,11 +200,12 @@ def import_material_pdf(path):
     db.execute(
         """
         INSERT INTO materials(
-            title, file_name, file_hash, page_count, word_count, content,
-            is_published, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            category, title, file_name, file_hash, page_count, word_count,
+            content, is_published, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            category,
             title,
             file_name,
             file_hash,
@@ -207,9 +226,14 @@ def sync_materials_from_directory(directory):
         return {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0}
 
     result = {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0}
-    for pdf_path in sorted(path.glob("*.pdf")):
+    for pdf_path in sorted(path.rglob("*.pdf")):
+        relative_path = pdf_path.relative_to(path)
+        file_name = relative_path.as_posix()
+        category = material_category_from_relative_path(relative_path)
         try:
-            status = import_material_pdf(str(pdf_path))
+            status = import_material_pdf(
+                str(pdf_path), file_name=file_name, category=category
+            )
         except Exception:
             current_app.logger.exception("资料解析失败：%s", pdf_path)
             result["skipped"] += 1
