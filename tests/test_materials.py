@@ -73,9 +73,16 @@ def test_empty_material_square_and_auth(app, client, make_user):
     assert "资料库暂时为空".encode() in response.data
 
 
-def test_material_reader_tokenizes_and_rejects_unpublished(
-    app, client, make_user
+def test_material_reader_uses_pdf_page_image_and_word_overlay(
+    app, client, make_user, tmp_path
 ):
+    materials_dir = tmp_path / "materials"
+    materials_dir.mkdir()
+    app.config["MATERIALS_DIR"] = str(materials_dir)
+    write_pdf(
+        materials_dir / "reader.pdf",
+        "Students don't abandon long-term goals.",
+    )
     user_id = make_user("reader@tju.edu.cn")
     with app.app_context():
         db = get_db()
@@ -108,9 +115,15 @@ def test_material_reader_tokenizes_and_rejects_unpublished(
     login_as(client, user_id)
     response = client.get(f"/materials/{published}")
     assert response.status_code == 200
-    assert 'data-word="don&#39;t"'.encode() in response.data
-    assert 'data-word="long-term"'.encode() in response.data
+    assert f"/materials/{published}/pages/1.png".encode() in response.data
+    assert b'class="pdf-word-hit"' in response.data
+    assert 'data-word="students"'.encode() in response.data
+    assert b"material-reader" not in response.data
     assert client.get(f"/materials/{unpublished}").status_code == 404
+
+    image = client.get(f"/materials/{published}/pages/1.png")
+    assert image.status_code == 200
+    assert image.mimetype == "image/png"
 
 
 def test_material_lookup_and_import_join_today_quiz(

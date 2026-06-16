@@ -5,25 +5,31 @@
   <div>
     <p class="eyebrow">资料阅读</p>
     <h1>{{ material.title }}</h1>
-    <p class="muted">{{ material.page_count }} 页 · {{ material.word_count }} 词 · 点击英文单词查看释义。</p>
+    <p class="muted">{{ material.page_count }} 页 · {{ material.word_count }} 词 · 保留 PDF 原始版面，点击英文单词查看释义。</p>
   </div>
   <a class="button subtle" href="{{ url_for('material_square') }}">返回资料广场</a>
 </div>
 
-<section class="reader-layout">
-  <article class="card material-reader">
-    {% for paragraph in paragraphs %}
-    <p>
-      {% for token in paragraph %}
-        {% if token.type == "word" %}
-          <button class="material-word" type="button" data-word="{{ token.lookup }}">{{ token.value }}</button>
-        {% else %}
-          {{ token.value }}
-        {% endif %}
-      {% endfor %}
-    </p>
-    {% endfor %}
+<section class="pdf-reader" aria-label="{{ material.title }}">
+  {% for page in pages %}
+  <article class="pdf-page card" style="max-width: {{ page.width }}px;">
+    <div class="pdf-page-number">第 {{ page.number }} 页</div>
+    <div class="pdf-page-canvas" style="aspect-ratio: {{ page.width }} / {{ page.height }};">
+      <img src="{{ url_for('material_page_image', material_id=material.id, page_number=page.number) }}" alt="{{ material.title }} 第 {{ page.number }} 页">
+      <div class="pdf-word-layer" aria-hidden="false">
+        {% for word in page.words %}
+        <button
+          class="pdf-word-hit"
+          type="button"
+          title="{{ word.text }}"
+          data-word="{{ word.lookup }}"
+          style="left: {{ word.left }}%; top: {{ word.top }}%; width: {{ word.width }}%; height: {{ word.height }}%;"
+        ></button>
+        {% endfor %}
+      </div>
+    </div>
   </article>
+  {% endfor %}
 </section>
 
 <div id="word-popover" class="word-popover" hidden>
@@ -59,8 +65,8 @@
   function placePopover(event) {
     const padding = 14;
     popover.hidden = false;
-    popover.style.left = `${Math.min(event.clientX + padding, window.innerWidth - popover.offsetWidth - padding)}px`;
-    popover.style.top = `${Math.min(event.clientY + padding, window.innerHeight - popover.offsetHeight - padding)}px`;
+    popover.style.left = `${Math.max(padding, Math.min(event.clientX + padding, window.innerWidth - popover.offsetWidth - padding))}px`;
+    popover.style.top = `${Math.max(padding, Math.min(event.clientY + padding, window.innerHeight - popover.offsetHeight - padding))}px`;
   }
 
   function renderLoading(word, event) {
@@ -171,7 +177,7 @@
     }
   }
 
-  document.querySelectorAll(".material-word").forEach(button => {
+  document.querySelectorAll(".pdf-word-hit").forEach(button => {
     button.addEventListener("click", event => {
       lookupWord(button.dataset.word, event);
     });

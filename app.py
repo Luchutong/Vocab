@@ -32,8 +32,10 @@ from answer_matching import check_answer
 from dict_query import download_ecdict, ecdict_status, lookup, suggestions
 from material_library import (
     material_contains_word,
+    material_page_layout,
+    material_pdf_path,
+    render_material_page,
     sync_materials_from_directory,
-    tokenize_material_text,
 )
 from models import (
     get_db,
@@ -767,12 +769,42 @@ def register_routes(app):
         ).fetchone()
         if material is None:
             abort(404, description="资料不存在或尚未发布。")
-        paragraphs = tokenize_material_text(material["content"])
+        pdf_path = material_pdf_path(
+            app.config["MATERIALS_DIR"], material["file_name"]
+        )
+        if not pdf_path.exists():
+            abort(404, description="资料 PDF 文件不存在，请联系管理员。")
+        pages = material_page_layout(pdf_path)
         return render_template(
             "material_reader.html",
             material=material,
-            paragraphs=paragraphs,
+            pages=pages,
         )
+
+    @app.route("/materials/<int:material_id>/pages/<int:page_number>.png")
+    @login_required
+    def material_page_image(material_id, page_number):
+        material = get_db().execute(
+            """
+            SELECT file_name FROM materials
+            WHERE id=? AND is_published=1
+            """,
+            (material_id,),
+        ).fetchone()
+        if material is None:
+            abort(404, description="资料不存在或尚未发布。")
+        pdf_path = material_pdf_path(
+            app.config["MATERIALS_DIR"], material["file_name"]
+        )
+        if not pdf_path.exists():
+            abort(404, description="资料 PDF 文件不存在，请联系管理员。")
+        try:
+            image = render_material_page(pdf_path, page_number)
+        except IndexError:
+            abort(404, description="页码不存在。")
+        response = send_file(image, mimetype="image/png")
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        return response
 
     @app.route("/api/materials/<int:material_id>/lookup", methods=("POST",))
     @login_required

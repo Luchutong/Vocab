@@ -2,6 +2,7 @@ import hashlib
 import os
 import re
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 from flask import current_app
@@ -56,6 +57,60 @@ def tokenize_material_text(text):
         if tokens:
             paragraphs.append(tokens)
     return paragraphs
+
+
+def material_pdf_path(directory, file_name):
+    base = Path(directory).resolve()
+    path = (base / file_name).resolve()
+    if base not in path.parents and path != base:
+        raise ValueError("资料文件路径无效。")
+    return path
+
+
+def material_page_layout(path):
+    import fitz
+
+    pages = []
+    with fitz.open(path) as document:
+        for index, page in enumerate(document):
+            words = []
+            for raw in page.get_text("words"):
+                x0, y0, x1, y1, text = raw[:5]
+                if text.lower().startswith(("http://", "https://", "www.")):
+                    continue
+                match = WORD_TOKEN_RE.search(text)
+                if not match:
+                    continue
+                words.append(
+                    {
+                        "text": match.group(0),
+                        "lookup": match.group(0).lower(),
+                        "left": round(x0 / page.rect.width * 100, 4),
+                        "top": round(y0 / page.rect.height * 100, 4),
+                        "width": round((x1 - x0) / page.rect.width * 100, 4),
+                        "height": round((y1 - y0) / page.rect.height * 100, 4),
+                    }
+                )
+            pages.append(
+                {
+                    "number": index + 1,
+                    "width": round(page.rect.width, 2),
+                    "height": round(page.rect.height, 2),
+                    "words": words,
+                }
+            )
+    return pages
+
+
+def render_material_page(path, page_number, zoom=1.8):
+    import fitz
+
+    with fitz.open(path) as document:
+        if page_number < 1 or page_number > document.page_count:
+            raise IndexError("页码不存在。")
+        page = document[page_number - 1]
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        return BytesIO(pixmap.tobytes("png"))
 
 
 def extract_pdf_text(path):
