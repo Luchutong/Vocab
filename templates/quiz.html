@@ -20,6 +20,17 @@
     <p class="muted center">请输入这个单词的中文释义</p>
     <h2 id="quiz-word" class="quiz-word">{{ question.display if question else '' }}</h2>
     <p id="quiz-form-type" class="quiz-form-type">{{ question.form_type if question else '' }}</p>
+    <div id="quiz-source" class="quiz-source" {% if not question %}hidden{% endif %}>
+      <span id="quiz-source-label" class="source-badge {{ 'material' if question and question.source_type == 'material' else 'direct' }}">
+        {{ question.source_label if question else '' }}
+      </span>
+      <span id="quiz-source-title">
+        {% if question and question.source_type == 'material' %}
+          {{ question.material_category }} · {{ question.material_title }}
+        {% endif %}
+      </span>
+      <blockquote id="quiz-source-excerpt" {% if not question or not question.material_excerpt %}hidden{% endif %}>{{ question.material_excerpt if question else '' }}</blockquote>
+    </div>
     <input id="quiz-answer" class="quiz-answer" type="text" placeholder="输入中文释义后按回车" autocomplete="off">
     <button id="check-button" class="button primary wide" type="button">检查答案</button>
     <div id="answer-result" class="answer-result" hidden></div>
@@ -44,10 +55,33 @@
   const complete = document.querySelector("#quiz-complete");
   const word = document.querySelector("#quiz-word");
   const formType = document.querySelector("#quiz-form-type");
+  const sourceBox = document.querySelector("#quiz-source");
+  const sourceLabel = document.querySelector("#quiz-source-label");
+  const sourceTitle = document.querySelector("#quiz-source-title");
+  const sourceExcerpt = document.querySelector("#quiz-source-excerpt");
   const answer = document.querySelector("#quiz-answer");
   const result = document.querySelector("#answer-result");
   const panel = document.querySelector("#rating-panel");
   const checkButton = document.querySelector("#check-button");
+
+  function renderSource(data) {
+    if (!data) {
+      sourceBox.hidden = true;
+      return;
+    }
+    sourceBox.hidden = false;
+    sourceLabel.textContent = data.source_label || "手动/Agent 导入";
+    sourceLabel.className = `source-badge ${data.source_type === "material" ? "material" : "direct"}`;
+    if (data.source_type === "material") {
+      sourceTitle.textContent = `${data.material_category} · ${data.material_title}`;
+      sourceExcerpt.textContent = data.material_excerpt || "";
+      sourceExcerpt.hidden = !data.material_excerpt;
+    } else {
+      sourceTitle.textContent = "";
+      sourceExcerpt.textContent = "";
+      sourceExcerpt.hidden = true;
+    }
+  }
 
   async function checkAnswer() {
     if (!currentId || !answer.value.trim() || checking) return;
@@ -135,6 +169,7 @@
     currentId = data.next_word.id;
     word.textContent = data.next_word.display;
     formType.textContent = data.next_word.form_type;
+    renderSource(data.next_word);
     answer.value = "";
     answer.disabled = false;
     checkButton.disabled = false;

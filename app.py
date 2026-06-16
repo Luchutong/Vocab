@@ -32,6 +32,7 @@ from answer_matching import check_answer
 from dict_query import download_ecdict, ecdict_status, lookup, suggestions
 from material_library import (
     material_contains_word,
+    material_excerpt_for_word,
     material_page_layout,
     material_pdf_path,
     render_material_page,
@@ -326,6 +327,7 @@ def import_word_for_user(user_id, word_text, dictionary_entry, source):
     review = record_review(user_id, word, 3, source=source)
     return {
         "created": created,
+        "word_id": word["id"],
         "word": word_text,
         "definition": dictionary_entry["definition"],
         "phonetic": dictionary_entry.get("phonetic", ""),
@@ -334,7 +336,53 @@ def import_word_for_user(user_id, word_text, dictionary_entry, source):
     }
 
 
+def save_material_word_context(user_id, word_id, material_id, excerpt):
+    if not excerpt:
+        return
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    get_db().execute(
+        """
+        INSERT INTO word_material_contexts(
+            user_id, word_id, material_id, excerpt, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, word_id) DO UPDATE SET
+            material_id=excluded.material_id,
+            excerpt=excluded.excerpt,
+            updated_at=excluded.updated_at
+        """,
+        (user_id, word_id, material_id, excerpt, now, now),
+    )
+
+
+def source_payload_for_word(word):
+    context = get_db().execute(
+        """
+        SELECT c.excerpt, m.title, m.category
+        FROM word_material_contexts AS c
+        JOIN materials AS m ON m.id=c.material_id
+        WHERE c.user_id=? AND c.word_id=?
+        """,
+        (word["user_id"], word["id"]),
+    ).fetchone()
+    if context:
+        return {
+            "source_type": "material",
+            "source_label": "资料选词",
+            "material_title": context["title"],
+            "material_category": context["category"],
+            "material_excerpt": context["excerpt"],
+        }
+    return {
+        "source_type": "direct",
+        "source_label": "手动/Agent 导入",
+        "material_title": "",
+        "material_category": "",
+        "material_excerpt": "",
+    }
+
+
 def build_quiz_question(word):
+    source = source_payload_for_word(word)
     details = get_variation_details(word["word"], word["pos"])
     if details and random.random() < 0.3:
         selected = random.choice(details)
@@ -342,11 +390,13 @@ def build_quiz_question(word):
             "id": word["id"],
             "display": selected["form"],
             "form_type": selected["type"],
+            **source,
         }
     return {
         "id": word["id"],
         "display": word["word"],
         "form_type": "原形",
+        **source,
     }
 
 
@@ -900,7 +950,10 @@ def register_routes(app):
     @login_required
     def api_material_import(material_id):
         material = get_db().execute(
-            "SELECT content FROM materials WHERE id=? AND is_published=1",
+            """
+            SELECT id, content FROM materials
+            WHERE id=? AND is_published=1
+            """,
             (material_id,),
         ).fetchone()
         if material is None:
@@ -920,6 +973,12 @@ def register_routes(app):
             ), 404
         imported = import_word_for_user(
             g.user["id"], word, result, source="material_import"
+        )
+        save_material_word_context(
+            g.user["id"],
+            imported["word_id"],
+            material["id"],
+            material_excerpt_for_word(material["content"], word),
         )
         get_db().commit()
         return jsonify(
@@ -1225,8 +1284,21 @@ def register_routes(app):
     def word_list():
         rows = get_db().execute(
             """
-            SELECT * FROM words WHERE user_id=?
-            ORDER BY date_added DESC, word COLLATE NOCASE
+            SELECT
+                w.*,
+                CASE
+                    WHEN c.id IS NULL THEN '手动/Agent 导入'
+                    ELSE '资料选词'
+                END AS source_label,
+                c.excerpt AS material_excerpt,
+                m.title AS material_title,
+                m.category AS material_category
+            FROM words AS w
+            LEFT JOIN word_material_contexts AS c
+              ON c.user_id=w.user_id AND c.word_id=w.id
+            LEFT JOIN materials AS m ON m.id=c.material_id
+            WHERE w.user_id=?
+            ORDER BY w.date_added DESC, w.word COLLATE NOCASE
             """,
             (g.user["id"],),
         ).fetchall()
@@ -1338,6 +1410,7 @@ def register_routes(app):
             matched_meaning=answer_result["matched_meaning"],
             base_word=word["word"],
             variations=variation_details,
+            **source_payload_for_word(word),
         )
 
     @app.route("/quiz", methods=("POST",))
@@ -1398,6 +1471,22 @@ def register_routes(app):
                     (g.user["id"],),
                 ).fetchall()
             ]
+            material_contexts = [
+                dict(row)
+                for row in db.execute(
+                    """
+                    SELECT
+                        c.word_id, c.excerpt, c.created_at, c.updated_at,
+                        m.title AS material_title,
+                        m.category AS material_category,
+                        m.file_name AS material_file_name
+                    FROM word_material_contexts AS c
+                    JOIN materials AS m ON m.id=c.material_id
+                    WHERE c.user_id=? ORDER BY c.id
+                    """,
+                    (g.user["id"],),
+                ).fetchall()
+            ]
             settings = {
                 row["key"]: row["value"]
                 for row in db.execute(
@@ -1417,6 +1506,7 @@ def register_routes(app):
             "account_email": g.user["email"],
             "words": words,
             "review_log": logs,
+            "material_contexts": material_contexts,
             "settings": settings,
         }
         content = json.dumps(

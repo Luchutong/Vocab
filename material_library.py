@@ -27,6 +27,52 @@ def material_contains_word(text, word):
     )
 
 
+def material_excerpt_for_word(text, word, limit=280):
+    if not text or not word:
+        return ""
+    pattern = re.compile(
+        rf"\b{re.escape(word)}\b", re.IGNORECASE
+    )
+    match = pattern.search(text)
+    if not match:
+        return ""
+
+    start = max(
+        text.rfind(".", 0, match.start()),
+        text.rfind("!", 0, match.start()),
+        text.rfind("?", 0, match.start()),
+        text.rfind("\n", 0, match.start()),
+    )
+    end_candidates = [
+        index
+        for index in (
+            text.find(".", match.end()),
+            text.find("!", match.end()),
+            text.find("?", match.end()),
+            text.find("\n", match.end()),
+        )
+        if index != -1
+    ]
+    start = 0 if start == -1 else start + 1
+    end = min(end_candidates) + 1 if end_candidates else len(text)
+    excerpt = re.sub(r"\s+", " ", text[start:end]).strip()
+    if len(excerpt) <= limit:
+        return excerpt
+
+    word_index = excerpt.lower().find(word.lower())
+    if word_index == -1:
+        return excerpt[: limit - 1].rstrip() + "…"
+    half = limit // 2
+    trim_start = max(0, word_index - half)
+    trim_end = min(len(excerpt), trim_start + limit)
+    trimmed = excerpt[trim_start:trim_end].strip()
+    if trim_start:
+        trimmed = "…" + trimmed
+    if trim_end < len(excerpt):
+        trimmed = trimmed.rstrip() + "…"
+    return trimmed
+
+
 def material_title_from_filename(path):
     return Path(path).stem.replace("_", " ").strip()
 

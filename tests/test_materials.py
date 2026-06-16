@@ -226,9 +226,39 @@ def test_material_lookup_and_import_join_today_quiz(
             "SELECT source FROM review_log WHERE user_id=?", (user_id,)
         ).fetchone()
         assert log["source"] == "material_import"
+        context = db.execute(
+            """
+            SELECT c.excerpt, m.title
+            FROM word_material_contexts AS c
+            JOIN materials AS m ON m.id=c.material_id
+            WHERE c.user_id=?
+            """,
+            (user_id,),
+        ).fetchone()
+        assert context["title"] == "导入测试"
+        assert context["excerpt"] == "Students abandon old habits."
 
     quiz_page = client.get("/quiz")
     assert 'id="due-count">1</strong>'.encode() in quiz_page.data
+    assert "资料选词".encode() in quiz_page.data
+    assert b"Students abandon old habits." in quiz_page.data
+
+    word_list = client.get("/words")
+    assert "资料选词".encode() in word_list.data
+    assert "导入测试".encode() in word_list.data
+    assert b"Students abandon old habits." in word_list.data
+
+    with app.app_context():
+        word_id = get_db().execute(
+            "SELECT id FROM words WHERE user_id=? AND word='abandon'",
+            (user_id,),
+        ).fetchone()["id"]
+    checked = client.post(
+        "/api/quiz/check", json={"word_id": word_id, "answer": "放弃"}
+    )
+    payload = checked.get_json()
+    assert payload["source_label"] == "资料选词"
+    assert payload["material_excerpt"] == "Students abandon old habits."
 
 
 def test_material_reimport_existing_future_word_is_due_today(

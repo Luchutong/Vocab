@@ -24,8 +24,17 @@
         <div><h3>{{ item.word }}</h3><span>{{ item.phonetic }}</span></div>
         <span class="pos-tag">{{ item.pos or '未标注' }}</span>
       </div>
+      <div class="source-line">
+        <span class="source-badge {{ 'material' if item.material_excerpt else 'direct' }}">{{ item.source_label }}</span>
+        {% if item.material_excerpt %}
+        <span>{{ item.material_category }} · {{ item.material_title }}</span>
+        {% endif %}
+      </div>
       <p>{{ item.meaning }}</p>
       {% if item.example %}<blockquote>{{ item.example }}</blockquote>{% endif %}
+      {% if item.material_excerpt %}
+      <blockquote class="material-example">{{ item.material_excerpt }}</blockquote>
+      {% endif %}
       <div class="word-meta">
         <span>间隔 {{ item.interval }} 天</span>
         <span>下次 {{ item.next_review }}</span>

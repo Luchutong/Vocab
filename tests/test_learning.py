@@ -69,6 +69,11 @@ def test_new_word_is_available_for_same_day_quiz(app, client, make_user):
     quiz_page = client.get("/quiz")
     assert quiz_page.status_code == 200
     assert "还有 <strong id=\"due-count\">1</strong>".encode() in quiz_page.data
+    assert "手动/Agent 导入".encode() in quiz_page.data
+
+    word_list = client.get("/words")
+    assert "手动/Agent 导入".encode() in word_list.data
+    assert "资料选词".encode() not in word_list.data
 
     with app.app_context():
         word = get_db().execute(
@@ -296,6 +301,7 @@ def test_export_contains_only_current_user_and_no_secrets(
     assert response.headers["Cache-Control"] == "no-store, max-age=0"
     payload = json.loads(response.data)
     assert payload["format_version"] == 1
+    assert payload["material_contexts"] == []
     assert payload["account_email"] == "backup@tju.edu.cn"
     assert [word["word"] for word in payload["words"]] == ["abandon"]
     serialized = response.data.decode()

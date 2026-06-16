@@ -93,6 +93,20 @@ CREATE TABLE IF NOT EXISTS materials (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS word_material_contexts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    word_id INTEGER NOT NULL,
+    material_id INTEGER NOT NULL,
+    excerpt TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+    FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE CASCADE,
+    UNIQUE (user_id, word_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_words_due
 ON words(user_id, next_review);
 
@@ -104,6 +118,9 @@ ON agent_tokens(user_id, revoked_at);
 
 CREATE INDEX IF NOT EXISTS idx_materials_published
 ON materials(is_published, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_word_material_contexts_user
+ON word_material_contexts(user_id, word_id);
 
 """
 

@@ -188,6 +188,8 @@ input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(57,197,18
 .quiz-card > div { width: 100%; }
 .quiz-word { margin: 28px 0; color: var(--primary-dark); text-align: center; font-size: clamp(2.3rem, 7vw, 4.6rem); }
 .quiz-form-type { margin: -20px 0 24px; color: var(--muted); text-align: center; font-size: .85rem; }
+.quiz-source { margin: -10px auto 18px; display: grid; gap: 8px; justify-items: center; color: var(--muted); text-align: center; font-size: .86rem; }
+.quiz-source blockquote { width: min(620px, 100%); margin: 2px 0 0; padding: 10px 12px; color: #4f666d; border-left: 3px solid var(--primary); border-radius: 10px; background: #f3fbfa; text-align: left; }
 .quiz-answer { padding: 15px; text-align: center; font-size: 1.1rem; }
 .quiz-card .wide { margin-top: 12px; }
 .answer-result { margin-top: 18px; padding: 16px; border-radius: 12px; }
@@ -218,8 +220,13 @@ input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(57,197,18
 .word-card-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 .word-card h3 { margin: 0; font-size: 1.35rem; }
 .word-card-head div > span { color: var(--muted); font-size: .8rem; }
+.source-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: .78rem; }
+.source-badge { padding: 4px 9px; border-radius: 999px; font-size: .72rem; font-weight: 850; }
+.source-badge.direct { color: #42606b; background: #edf3f5; }
+.source-badge.material { color: #197b74; background: var(--primary-soft); }
 .word-card > p { margin-top: 15px; white-space: pre-line; }
 .word-card blockquote { margin: 12px 0; padding-left: 12px; color: var(--muted); border-left: 3px solid var(--primary); }
+.word-card blockquote.material-example { color: #4f666d; border-radius: 8px; background: #f3fbfa; padding: 10px 12px; }
 .word-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: .75rem; }
 .word-card form { position: absolute; right: 22px; bottom: 17px; }
 .agent-access-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
