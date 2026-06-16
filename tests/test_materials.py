@@ -71,6 +71,40 @@ def test_empty_material_square_and_auth(app, client, make_user):
     response = client.get("/materials")
     assert response.status_code == 200
     assert "资料库暂时为空".encode() in response.data
+    assert b"/admin/materials/resync" not in response.data
+
+
+def test_admin_can_resync_materials_without_restart(
+    app, client, make_user, tmp_path
+):
+    materials_dir = tmp_path / "materials"
+    materials_dir.mkdir()
+    app.config["MATERIALS_DIR"] = str(materials_dir)
+    app.config["ADMIN_EMAILS"] = "admin@tju.edu.cn"
+
+    normal_id = make_user("normal@tju.edu.cn")
+    login_as(client, normal_id)
+    assert client.post("/admin/materials/resync").status_code == 403
+    assert b"/admin/materials/resync" not in client.get("/materials").data
+
+    write_pdf(
+        materials_dir / "dynamic.pdf",
+        "Students explore authentic reading materials and collect "
+        "unfamiliar vocabulary for careful review. Teachers encourage "
+        "patient learners to compare passages, analyze context, and "
+        "practice words every day.",
+    )
+    admin_id = make_user("admin@tju.edu.cn")
+    login_as(client, admin_id)
+    response = client.get("/materials")
+    assert "重新扫描资料目录".encode() in response.data
+    response = client.post("/admin/materials/resync", follow_redirects=True)
+    assert response.status_code == 200
+    assert "新增 1".encode() in response.data
+    assert "dynamic.pdf".encode() in response.data
+    with app.app_context():
+        count = get_db().execute("SELECT COUNT(*) FROM materials").fetchone()[0]
+        assert count == 1
 
 
 def test_material_reader_uses_pdf_page_image_and_word_overlay(

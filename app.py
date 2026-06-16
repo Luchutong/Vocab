@@ -68,6 +68,9 @@ def create_app(test_config=None):
         ),
         MATERIALS_AUTO_IMPORT=os.environ.get("MATERIALS_AUTO_IMPORT", "1")
         != "0",
+        ADMIN_EMAILS=os.environ.get(
+            "ADMIN_EMAILS", os.environ.get("ADMIN_EMAIL", "")
+        ),
         SMTP_HOST=os.environ.get("SMTP_HOST", ""),
         SMTP_PORT=int(os.environ.get("SMTP_PORT", "587")),
         SMTP_USERNAME=os.environ.get("SMTP_USERNAME", ""),
@@ -117,6 +120,30 @@ def login_required(view):
         if not g.user["is_verified"]:
             flash("请先完成邮箱验证。", "warning")
             return redirect(url_for("verify_notice"))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def admin_emails():
+    raw = _app().config.get("ADMIN_EMAILS", "")
+    return {
+        item.strip().lower()
+        for item in raw.replace(";", ",").split(",")
+        if item.strip()
+    }
+
+
+def is_admin_user(user=None):
+    user = user if user is not None else g.get("user")
+    return bool(user and user["email"].lower() in admin_emails())
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not is_admin_user():
+            abort(403, description="只有管理员可以执行该操作。")
         return view(*args, **kwargs)
 
     return wrapped
@@ -403,7 +430,11 @@ def register_routes(app):
 
     @app.context_processor
     def inject_globals():
-        return {"current_user": g.user, "today": date.today()}
+        return {
+            "current_user": g.user,
+            "today": date.today(),
+            "current_user_is_admin": is_admin_user(),
+        }
 
     def quiz_reviews_today(user_id):
         return get_db().execute(
@@ -759,6 +790,21 @@ def register_routes(app):
             """
         ).fetchall()
         return render_template("materials.html", materials=rows)
+
+    @app.route("/admin/materials/resync", methods=("POST",))
+    @login_required
+    @admin_required
+    def admin_materials_resync():
+        result = sync_materials_from_directory(app.config["MATERIALS_DIR"])
+        flash(
+            "资料目录扫描完成："
+            f"新增 {result.get('created', 0)}，"
+            f"更新 {result.get('updated', 0)}，"
+            f"未变化 {result.get('unchanged', 0)}，"
+            f"跳过 {result.get('skipped', 0)}。",
+            "success",
+        )
+        return redirect(url_for("material_square"))
 
     @app.route("/materials/<int:material_id>")
     @login_required

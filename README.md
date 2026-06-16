@@ -28,6 +28,7 @@ python app.py
 | `DATABASE` | 建议 | SQLite 数据库路径，默认 `data/vocab.db` |
 | `ECDICT_DATABASE` | 是 | 完整 ECDICT 数据库路径，默认 `data/ecdict.db` |
 | `MATERIALS_DIR` | 建议 | 资料广场 PDF 目录，默认 `data/materials` |
+| `ADMIN_EMAILS` | 建议 | 管理员邮箱白名单，多个邮箱用英文逗号分隔；管理员可动态扫描资料目录 |
 | `SMTP_HOST` | 是 | SMTP 服务器地址 |
 | `SMTP_PORT` | 是 | SMTP 端口，STARTTLS 通常使用 `587` |
 | `SMTP_USERNAME` | 视服务而定 | SMTP 用户名 |
@@ -264,7 +265,9 @@ sudo systemctl reload nginx
 ### 6. 资料广场
 
 “资料广场”读取 `MATERIALS_DIR` 中的文本型 PDF。应用启动时会自动扫描
-`*.pdf`，使用 PyMuPDF 提取整卷文本，并按文件内容 SHA-256 去重写入
+`*.pdf`；配置 `ADMIN_EMAILS` 后，管理员也可以在资料广场点击
+“重新扫描资料目录”动态入库，无需重启网站。扫描过程使用 PyMuPDF 提取整卷文本，
+并按文件内容 SHA-256 去重写入
 `materials` 表。扫描版 PDF 或无法提取足够英文文本的文件会被跳过并记录日志，
 不会影响网站启动。
 
@@ -274,12 +277,20 @@ sudo systemctl reload nginx
 sudo install -d -o vocab -g vocab -m 750 /var/lib/vocab/materials
 sudo cp 2025年12月英语六级真题*.pdf /var/lib/vocab/materials/
 sudo chown vocab:vocab /var/lib/vocab/materials/*.pdf
-sudo systemctl restart vocab
 ```
 
-登录后进入“资料广场”，选择资料阅读。阅读页会把英文单词渲染为可点击文本，
-点击后显示释义浮层，并可将单词加入当天正式测验。v1 不提供用户上传入口，后续
-优质资料上传会作为独立审核流程扩展。
+确保 `.env` 中包含管理员邮箱：
+
+```bash
+ADMIN_EMAILS=luchutong@tju.edu.cn
+```
+
+随后用该邮箱登录，进入“资料广场”，点击“重新扫描资料目录”即可解析新 PDF。
+如果尚未配置管理员邮箱，也可以重启服务触发启动扫描。
+
+登录后进入“资料广场”，选择资料阅读。阅读页会按 PDF 原版面渲染页面图片，
+并在英文单词坐标上叠加透明点击层；点击后显示释义浮层，并可将单词加入当天正式
+测验。v1 不提供用户上传入口，后续优质资料上传会作为独立审核流程扩展。
 
 ### 7. 数据持久化和自动备份
 

@@ -7,6 +7,11 @@
     <h1>资料广场</h1>
     <p class="muted">从平台预置真题中阅读选词，点击陌生词即可查看释义并加入今日测验。</p>
   </div>
+  {% if current_user_is_admin %}
+  <form action="{{ url_for('admin_materials_resync') }}" method="post">
+    <button class="button subtle" type="submit">重新扫描资料目录</button>
+  </form>
+  {% endif %}
 </div>
 
 {% if materials %}
@@ -28,7 +33,10 @@
 {% else %}
 <section class="card empty-state large">
   <h2>资料库暂时为空</h2>
-  <p>请将文本型 PDF 放入服务器的 <code>MATERIALS_DIR</code>，重启后会自动入库。</p>
+  <p>
+    请将文本型 PDF 放入服务器的 <code>MATERIALS_DIR</code>。
+    管理员可点击“重新扫描资料目录”动态入库，无需重启网站。
+  </p>
 </section>
 {% endif %}
 {% endblock %}
