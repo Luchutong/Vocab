@@ -32,7 +32,7 @@
     </div>
   </header>
 
-  <main class="page-shell">
+  <main class="page-shell {% block main_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="flash-stack" aria-live="polite">
