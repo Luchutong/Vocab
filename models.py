@@ -79,6 +79,19 @@ CREATE TABLE IF NOT EXISTS agent_import_requests (
     UNIQUE (user_id, idempotency_key)
 );
 
+CREATE TABLE IF NOT EXISTS materials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    file_name TEXT NOT NULL UNIQUE,
+    file_hash TEXT NOT NULL UNIQUE,
+    page_count INTEGER NOT NULL DEFAULT 0,
+    word_count INTEGER NOT NULL DEFAULT 0,
+    content TEXT NOT NULL,
+    is_published INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_words_due
 ON words(user_id, next_review);
 
@@ -87,6 +100,9 @@ ON review_log(user_id, reviewed_at);
 
 CREATE INDEX IF NOT EXISTS idx_agent_tokens_user
 ON agent_tokens(user_id, revoked_at);
+
+CREATE INDEX IF NOT EXISTS idx_materials_published
+ON materials(is_published, updated_at);
 """
 
 

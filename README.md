@@ -27,6 +27,7 @@ python app.py
 | `SECRET_KEY` | 是 | Session 和签名令牌密钥，生产环境必须使用随机长字符串 |
 | `DATABASE` | 建议 | SQLite 数据库路径，默认 `data/vocab.db` |
 | `ECDICT_DATABASE` | 是 | 完整 ECDICT 数据库路径，默认 `data/ecdict.db` |
+| `MATERIALS_DIR` | 建议 | 资料广场 PDF 目录，默认 `data/materials` |
 | `SMTP_HOST` | 是 | SMTP 服务器地址 |
 | `SMTP_PORT` | 是 | SMTP 端口，STARTTLS 通常使用 `587` |
 | `SMTP_USERNAME` | 视服务而定 | SMTP 用户名 |
@@ -81,7 +82,7 @@ sudo useradd --system --home /opt/vocab --shell /usr/sbin/nologin vocab
 sudo git clone https://github.com/Luchutong/Vocab.git /opt/vocab
 sudo python3 -m venv /opt/vocab/venv
 sudo /opt/vocab/venv/bin/pip install -r /opt/vocab/requirements.txt
-sudo install -d -o vocab -g vocab -m 750 /var/lib/vocab
+sudo install -d -o vocab -g vocab -m 750 /var/lib/vocab /var/lib/vocab/materials
 sudo chown -R vocab:vocab /opt/vocab
 ```
 
@@ -120,6 +121,7 @@ SECRET_KEY=替换为上一步生成的随机字符串
 DATABASE=/var/lib/vocab/vocab.db
 ECDICT_DATABASE=/var/lib/vocab/ecdict.db
 DICTIONARY_CACHE_DATABASE=/var/lib/vocab/dictionary-cache.db
+MATERIALS_DIR=/var/lib/vocab/materials
 ONLINE_DICTIONARY_ENABLED=0
 DICTIONARY_API_TIMEOUT=8
 MERRIAM_WEBSTER_API_KEY=
@@ -259,13 +261,34 @@ sudo systemctl reload nginx
 `MERRIAM_WEBSTER_API_KEY`。Key 只能放在服务端环境文件中，不得写入前端、
 源码或 Git。在线服务受第三方额度和使用条款约束。
 
-### 6. 数据持久化和自动备份
+### 6. 资料广场
+
+“资料广场”读取 `MATERIALS_DIR` 中的文本型 PDF。应用启动时会自动扫描
+`*.pdf`，使用 PyMuPDF 提取整卷文本，并按文件内容 SHA-256 去重写入
+`materials` 表。扫描版 PDF 或无法提取足够英文文本的文件会被跳过并记录日志，
+不会影响网站启动。
+
+本仓库不提交真题 PDF。部署时将资料单独上传到服务器：
+
+```bash
+sudo install -d -o vocab -g vocab -m 750 /var/lib/vocab/materials
+sudo cp 2025年12月英语六级真题*.pdf /var/lib/vocab/materials/
+sudo chown vocab:vocab /var/lib/vocab/materials/*.pdf
+sudo systemctl restart vocab
+```
+
+登录后进入“资料广场”，选择资料阅读。阅读页会把英文单词渲染为可点击文本，
+点击后显示释义浮层，并可将单词加入当天正式测验。v1 不提供用户上传入口，后续
+优质资料上传会作为独立审核流程扩展。
+
+### 7. 数据持久化和自动备份
 
 需要持久化的文件：
 
 - `/var/lib/vocab/vocab.db`：用户、单词、复习进度和设置。
 - `/var/lib/vocab/dictionary-cache.db`：已查询词条的小型在线缓存。
 - `/var/lib/vocab/ecdict.db`：完整 ECDICT，可重新下载，但保留可减少部署时间。
+- `/var/lib/vocab/materials/`：资料广场 PDF，需单独上传，不进入 Git。
 - `/etc/vocab.env`：密钥和邮件配置，应单独安全备份。
 
 SQLite 在线备份请使用 SQLite 的备份命令，不要在服务运行时直接复制数据库：
@@ -294,7 +317,7 @@ sudo systemctl start vocab
 
 用户也可以在“词库管理”页面下载自己的完整 JSON 学习数据备份。
 
-### 7. Agent 导入接口
+### 8. Agent 导入接口
 
 用户可在“词库管理”进入“Agent 接口”，创建个人 Token。Token 明文只显示一次，
 数据库仅保存 SHA-256 摘要；不用时应立即在页面撤销。调用必须使用 HTTPS：
@@ -340,7 +363,7 @@ location = /api/agent/import {
 数组交给 Agent 执行即可。不要把 Token 写进仓库、聊天提示词或公开配置；服务器
 地址应使用正式 HTTPS 域名，不建议通过公网明文 HTTP 传输 Bearer Token。
 
-### 8. 后续升级
+### 9. 后续升级
 
 ```bash
 sudo systemctl stop vocab

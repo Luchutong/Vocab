@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}{{ material.title }} - 资料广场{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">资料阅读</p>
+    <h1>{{ material.title }}</h1>
+    <p class="muted">{{ material.page_count }} 页 · {{ material.word_count }} 词 · 点击英文单词查看释义。</p>
+  </div>
+  <a class="button subtle" href="{{ url_for('material_square') }}">返回资料广场</a>
+</div>
+
+<section class="reader-layout">
+  <article class="card material-reader">
+    {% for paragraph in paragraphs %}
+    <p>
+      {% for token in paragraph %}
+        {% if token.type == "word" %}
+          <button class="material-word" type="button" data-word="{{ token.lookup }}">{{ token.value }}</button>
+        {% else %}
+          {{ token.value }}
+        {% endif %}
+      {% endfor %}
+    </p>
+    {% endfor %}
+  </article>
+</section>
+
+<div id="word-popover" class="word-popover" hidden>
+  <button class="popover-close" type="button" aria-label="关闭">×</button>
+  <p class="eyebrow">查词结果</p>
+  <h2 id="popover-word"></h2>
+  <p id="popover-phonetic" class="phonetic"></p>
+  <span id="popover-pos" class="pos-tag"></span>
+  <p id="popover-definition" class="definition"></p>
+  <p id="popover-message" class="status-message" aria-live="polite"></p>
+  <div id="popover-suggestions" class="suggestions" hidden></div>
+  <button id="popover-import" class="button primary wide" type="button" hidden>加入当天生词</button>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const popover = document.querySelector("#word-popover");
+  const closeButton = document.querySelector(".popover-close");
+  const wordTitle = document.querySelector("#popover-word");
+  const phonetic = document.querySelector("#popover-phonetic");
+  const pos = document.querySelector("#popover-pos");
+  const definition = document.querySelector("#popover-definition");
+  const message = document.querySelector("#popover-message");
+  const suggestions = document.querySelector("#popover-suggestions");
+  const importButton = document.querySelector("#popover-import");
+  const lookupUrl = "{{ url_for('api_material_lookup', material_id=material.id) }}";
+  const importUrl = "{{ url_for('api_material_import', material_id=material.id) }}";
+  const cache = new Map();
+  let currentWord = "";
+  let busy = false;
+
+  function placePopover(event) {
+    const padding = 14;
+    popover.hidden = false;
+    popover.style.left = `${Math.min(event.clientX + padding, window.innerWidth - popover.offsetWidth - padding)}px`;
+    popover.style.top = `${Math.min(event.clientY + padding, window.innerHeight - popover.offsetHeight - padding)}px`;
+  }
+
+  function renderLoading(word, event) {
+    currentWord = word;
+    wordTitle.textContent = word;
+    phonetic.textContent = "";
+    pos.textContent = "";
+    definition.textContent = "";
+    message.className = "status-message";
+    message.textContent = "正在查询词典…";
+    suggestions.hidden = true;
+    suggestions.innerHTML = "";
+    importButton.hidden = true;
+    placePopover(event);
+  }
+
+  function renderResult(word, data) {
+    currentWord = word;
+    wordTitle.textContent = data.word || word;
+    phonetic.textContent = data.phonetic ? `[${data.phonetic}]` : "暂无音标";
+    pos.textContent = data.pos || "未标注词性";
+    definition.textContent = data.definition || "";
+    suggestions.hidden = true;
+    suggestions.innerHTML = "";
+    importButton.hidden = false;
+    importButton.disabled = false;
+    importButton.textContent = data.existing ? "已在词库，记作今日复习" : "加入当天生词";
+    message.className = "status-message";
+    message.textContent = data.existing ? "这个单词已在你的词库中。" : "";
+  }
+
+  function renderError(word, data) {
+    currentWord = word;
+    wordTitle.textContent = word;
+    phonetic.textContent = "";
+    pos.textContent = "";
+    definition.textContent = "";
+    importButton.hidden = true;
+    message.className = "status-message error-text";
+    message.textContent = data.error || "查询失败。";
+    suggestions.innerHTML = "";
+    if (data.suggestions && data.suggestions.length) {
+      suggestions.innerHTML = "<span>可能的拼写：</span>";
+      data.suggestions.forEach(item => {
+        const pill = document.createElement("span");
+        pill.className = "suggestion-pill";
+        pill.textContent = item;
+        suggestions.appendChild(pill);
+      });
+      suggestions.hidden = false;
+    } else {
+      suggestions.hidden = true;
+    }
+  }
+
+  async function lookupWord(word, event) {
+    renderLoading(word, event);
+    if (cache.has(word)) {
+      const cached = cache.get(word);
+      cached.ok ? renderResult(word, cached) : renderError(word, cached);
+      return;
+    }
+    try {
+      const response = await fetch(lookupUrl, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({word})
+      });
+      const data = await response.json();
+      data.ok = response.ok;
+      cache.set(word, data);
+      response.ok ? renderResult(word, data) : renderError(word, data);
+    } catch (_error) {
+      renderError(word, {error: "网络请求失败，请稍后重试。"});
+    }
+  }
+
+  async function importCurrentWord() {
+    if (!currentWord || busy) return;
+    busy = true;
+    importButton.disabled = true;
+    message.className = "status-message";
+    message.textContent = "正在加入今日测验…";
+    try {
+      const response = await fetch(importUrl, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({word: currentWord})
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        message.className = "status-message error-text";
+        message.textContent = data.error || "导入失败。";
+        importButton.disabled = false;
+        return;
+      }
+      message.className = "status-message success-text";
+      message.textContent = data.message;
+      importButton.textContent = "已加入今日测验";
+      const cached = cache.get(currentWord);
+      if (cached) cached.existing = true;
+    } catch (_error) {
+      message.className = "status-message error-text";
+      message.textContent = "网络请求失败，请稍后重试。";
+      importButton.disabled = false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  document.querySelectorAll(".material-word").forEach(button => {
+    button.addEventListener("click", event => {
+      lookupWord(button.dataset.word, event);
+    });
+  });
+  importButton.addEventListener("click", importCurrentWord);
+  closeButton.addEventListener("click", () => popover.hidden = true);
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") popover.hidden = true;
+  });
+})();
+</script>
+{% endblock %}

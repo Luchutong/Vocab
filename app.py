@@ -30,6 +30,11 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from answer_matching import check_answer
 from dict_query import download_ecdict, ecdict_status, lookup, suggestions
+from material_library import (
+    material_contains_word,
+    sync_materials_from_directory,
+    tokenize_material_text,
+)
 from models import (
     get_db,
     get_setting,
@@ -56,6 +61,11 @@ def create_app(test_config=None):
         DATABASE=os.environ.get(
             "DATABASE", os.path.join(BASE_DIR, "data", "vocab.db")
         ),
+        MATERIALS_DIR=os.environ.get(
+            "MATERIALS_DIR", os.path.join(BASE_DIR, "data", "materials")
+        ),
+        MATERIALS_AUTO_IMPORT=os.environ.get("MATERIALS_AUTO_IMPORT", "1")
+        != "0",
         SMTP_HOST=os.environ.get("SMTP_HOST", ""),
         SMTP_PORT=int(os.environ.get("SMTP_PORT", "587")),
         SMTP_USERNAME=os.environ.get("SMTP_USERNAME", ""),
@@ -73,6 +83,9 @@ def create_app(test_config=None):
         )
 
     register_app(app)
+    if app.config["MATERIALS_AUTO_IMPORT"]:
+        with app.app_context():
+            sync_materials_from_directory(app.config["MATERIALS_DIR"])
     register_routes(app)
     return app
 
@@ -414,7 +427,9 @@ def register_routes(app):
                             SELECT 1 FROM review_log AS imported
                             WHERE imported.user_id=w.user_id
                               AND imported.word_id=w.id
-                              AND imported.source IN ('import', 'agent_import')
+                              AND imported.source IN (
+                                  'import', 'agent_import', 'material_import'
+                              )
                               AND substr(imported.reviewed_at, 1, 10)=?
                         )
                     )
@@ -729,6 +744,99 @@ def register_routes(app):
             get_db().commit()
             flash("每日复习上限已更新。", "success")
         return redirect(url_for("dashboard"))
+
+    @app.route("/materials")
+    @login_required
+    def material_square():
+        rows = get_db().execute(
+            """
+            SELECT id, title, file_name, page_count, word_count, updated_at
+            FROM materials
+            WHERE is_published=1
+            ORDER BY updated_at DESC, id DESC
+            """
+        ).fetchall()
+        return render_template("materials.html", materials=rows)
+
+    @app.route("/materials/<int:material_id>")
+    @login_required
+    def material_reader(material_id):
+        material = get_db().execute(
+            "SELECT * FROM materials WHERE id=? AND is_published=1",
+            (material_id,),
+        ).fetchone()
+        if material is None:
+            abort(404, description="资料不存在或尚未发布。")
+        paragraphs = tokenize_material_text(material["content"])
+        return render_template(
+            "material_reader.html",
+            material=material,
+            paragraphs=paragraphs,
+        )
+
+    @app.route("/api/materials/<int:material_id>/lookup", methods=("POST",))
+    @login_required
+    def api_material_lookup(material_id):
+        material = get_db().execute(
+            "SELECT content FROM materials WHERE id=? AND is_published=1",
+            (material_id,),
+        ).fetchone()
+        if material is None:
+            return jsonify(ok=False, error="资料不存在或尚未发布。"), 404
+        payload = request.get_json(silent=True) or {}
+        word = payload.get("word", "").strip().lower()
+        if not WORD_RE.fullmatch(word):
+            return jsonify(ok=False, error="请选择有效英文单词。"), 400
+        if not material_contains_word(material["content"], word):
+            return jsonify(ok=False, error="该单词不在当前资料中。"), 400
+        result = lookup(word)
+        if result is None:
+            return jsonify(
+                ok=False,
+                error="词典中未找到该单词，请检查拼写。",
+                suggestions=suggestions(word),
+            ), 404
+        existing = get_db().execute(
+            "SELECT id FROM words WHERE user_id=? AND word=?",
+            (g.user["id"], word),
+        ).fetchone()
+        return jsonify(ok=True, word=word, **result, existing=bool(existing))
+
+    @app.route("/api/materials/<int:material_id>/import", methods=("POST",))
+    @login_required
+    def api_material_import(material_id):
+        material = get_db().execute(
+            "SELECT content FROM materials WHERE id=? AND is_published=1",
+            (material_id,),
+        ).fetchone()
+        if material is None:
+            return jsonify(ok=False, error="资料不存在或尚未发布。"), 404
+        payload = request.get_json(silent=True) or {}
+        word = payload.get("word", "").strip().lower()
+        if not WORD_RE.fullmatch(word):
+            return jsonify(ok=False, error="请选择有效英文单词。"), 400
+        if not material_contains_word(material["content"], word):
+            return jsonify(ok=False, error="该单词不在当前资料中。"), 400
+        result = lookup(word)
+        if result is None:
+            return jsonify(
+                ok=False,
+                error="词典中未找到该单词，请检查拼写。",
+                suggestions=suggestions(word),
+            ), 404
+        imported = import_word_for_user(
+            g.user["id"], word, result, source="material_import"
+        )
+        get_db().commit()
+        return jsonify(
+            ok=True,
+            **imported,
+            message=(
+                "单词已从资料加入今日正式测验。"
+                if imported["created"]
+                else "该单词已在词库中，并已加入今日正式测验。"
+            ),
+        )
 
     @app.route("/import")
     @login_required
@@ -1063,7 +1171,9 @@ def register_routes(app):
                             SELECT 1 FROM review_log AS imported
                             WHERE imported.user_id=w.user_id
                               AND imported.word_id=w.id
-                              AND imported.source IN ('import', 'agent_import')
+                              AND imported.source IN (
+                                  'import', 'agent_import', 'material_import'
+                              )
                               AND substr(imported.reviewed_at, 1, 10)=?
                         )
                     )

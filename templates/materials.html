@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}资料广场 - 六级词汇复习系统{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">阅读选词</p>
+    <h1>资料广场</h1>
+    <p class="muted">从平台预置真题中阅读选词，点击陌生词即可查看释义并加入今日测验。</p>
+  </div>
+</div>
+
+{% if materials %}
+<section class="material-grid">
+  {% for item in materials %}
+  <article class="card material-card">
+    <p class="eyebrow">六级真题</p>
+    <h2>{{ item.title }}</h2>
+    <p class="muted">{{ item.file_name }}</p>
+    <div class="material-meta">
+      <span>{{ item.page_count }} 页</span>
+      <span>{{ item.word_count }} 词</span>
+      <span>更新 {{ item.updated_at[:10] }}</span>
+    </div>
+    <a class="button primary" href="{{ url_for('material_reader', material_id=item.id) }}">开始阅读</a>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="card empty-state large">
+  <h2>资料库暂时为空</h2>
+  <p>请将文本型 PDF 放入服务器的 <code>MATERIALS_DIR</code>，重启后会自动入库。</p>
+</section>
+{% endif %}
+{% endblock %}

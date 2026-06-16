@@ -20,6 +20,7 @@ def app(tmp_path):
             "TESTING": True,
             "SECRET_KEY": "test-secret",
             "DATABASE": str(tmp_path / "test.db"),
+            "MATERIALS_AUTO_IMPORT": False,
             "SMTP_HOST": "",
         }
     )
