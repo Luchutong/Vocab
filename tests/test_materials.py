@@ -3,7 +3,7 @@ from datetime import date, timedelta
 import fitz
 
 from app import create_app
-from material_library import sync_materials_from_directory
+from material_library import material_excerpt_for_word, sync_materials_from_directory
 from models import get_db
 from tests.conftest import login_as
 
@@ -14,6 +14,39 @@ def write_pdf(path, text):
     page.insert_textbox(fitz.Rect(72, 72, 520, 760), text, fontsize=12)
     document.save(path)
     document.close()
+
+
+def test_material_excerpt_prefers_full_sentence_over_line_fragment():
+    text = """
+Many    27
+  presume  that  there  is  a  single  standard  way  of  speaking,
+but  linguists  (语言学家)  often
+point  out  that  the  concept  of  a  standard  accent  is  better
+understood  as  an  ideal  rather  than  a    29  .
+"""
+    excerpt = material_excerpt_for_word(text, "linguists")
+    assert excerpt.startswith("Many 27 presume")
+    assert "linguists (语言学家) often point out" in excerpt
+    assert excerpt.endswith("rather than a 29 .")
+
+
+def test_material_excerpt_uses_word_bank_context_for_option_words():
+    text = """
+A. affix
+B. correlate
+C. deviate
+D. domains
+E. influential
+F. inherently
+G. laymen
+H. multiple
+I. properties
+"""
+    excerpt = material_excerpt_for_word(text, "influential")
+    assert excerpt.startswith("词库选项：")
+    assert "E. influential" in excerpt
+    assert "I. properties" in excerpt
+    assert excerpt != "influential"
 
 
 def test_materials_auto_import_from_pdf_and_updates(tmp_path):
@@ -237,6 +270,15 @@ def test_material_lookup_and_import_join_today_quiz(
         ).fetchone()
         assert context["title"] == "导入测试"
         assert context["excerpt"] == "Students abandon old habits."
+        db.execute(
+            """
+            UPDATE word_material_contexts
+            SET excerpt='abandon'
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
+        db.commit()
 
     quiz_page = client.get("/quiz")
     assert 'id="due-count">1</strong>'.encode() in quiz_page.data
@@ -247,6 +289,15 @@ def test_material_lookup_and_import_join_today_quiz(
     assert "资料选词".encode() in word_list.data
     assert "导入测试".encode() in word_list.data
     assert b"Students abandon old habits." in word_list.data
+    with app.app_context():
+        repaired = get_db().execute(
+            """
+            SELECT excerpt FROM word_material_contexts
+            WHERE user_id=?
+            """,
+            (user_id,),
+        ).fetchone()["excerpt"]
+        assert repaired == "Students abandon old habits."
 
     with app.app_context():
         word_id = get_db().execute(

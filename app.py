@@ -32,6 +32,7 @@ from answer_matching import check_answer
 from dict_query import download_ecdict, ecdict_status, lookup, suggestions
 from material_library import (
     material_contains_word,
+    material_excerpt_is_weak,
     material_excerpt_for_word,
     material_page_layout,
     material_pdf_path,
@@ -354,10 +355,37 @@ def save_material_word_context(user_id, word_id, material_id, excerpt):
     )
 
 
+def repaired_material_excerpt(user_id, word_id, word_text, context):
+    if not context:
+        return ""
+    excerpt = context["excerpt"] or ""
+    if not material_excerpt_is_weak(excerpt, word_text):
+        return excerpt
+    updated = material_excerpt_for_word(context["content"], word_text)
+    if updated and updated != excerpt:
+        db = get_db()
+        db.execute(
+            """
+            UPDATE word_material_contexts
+            SET excerpt=?, updated_at=?
+            WHERE user_id=? AND word_id=?
+            """,
+            (
+                updated,
+                datetime.now().astimezone().isoformat(timespec="seconds"),
+                user_id,
+                word_id,
+            ),
+        )
+        db.commit()
+        return updated
+    return excerpt
+
+
 def source_payload_for_word(word):
     context = get_db().execute(
         """
-        SELECT c.excerpt, m.title, m.category
+        SELECT c.excerpt, m.title, m.category, m.content
         FROM word_material_contexts AS c
         JOIN materials AS m ON m.id=c.material_id
         WHERE c.user_id=? AND c.word_id=?
@@ -365,12 +393,15 @@ def source_payload_for_word(word):
         (word["user_id"], word["id"]),
     ).fetchone()
     if context:
+        excerpt = repaired_material_excerpt(
+            word["user_id"], word["id"], word["word"], context
+        )
         return {
             "source_type": "material",
             "source_label": "资料选词",
             "material_title": context["title"],
             "material_category": context["category"],
-            "material_excerpt": context["excerpt"],
+            "material_excerpt": excerpt,
         }
     return {
         "source_type": "direct",
@@ -1305,7 +1336,8 @@ def register_routes(app):
                 END AS source_label,
                 c.excerpt AS material_excerpt,
                 m.title AS material_title,
-                m.category AS material_category
+                m.category AS material_category,
+                m.content AS material_content
             FROM words AS w
             LEFT JOIN word_material_contexts AS c
               ON c.user_id=w.user_id AND c.word_id=w.id
@@ -1317,7 +1349,21 @@ def register_routes(app):
         ).fetchall()
         groups = {}
         for row in rows:
-            groups.setdefault(row["date_added"], []).append(row)
+            item = dict(row)
+            if item["material_excerpt"]:
+                item["material_excerpt"] = repaired_material_excerpt(
+                    g.user["id"],
+                    item["id"],
+                    item["word"],
+                    {
+                        "excerpt": item["material_excerpt"],
+                        "content": item.pop("material_content", ""),
+                    },
+                )
+            else:
+                item.pop("material_content", None)
+            groups.setdefault(item["date_added"], []).append(item)
+        get_db().commit()
         return render_template("word_list.html", groups=groups)
 
     @app.route("/words/<int:word_id>/delete", methods=("POST",))

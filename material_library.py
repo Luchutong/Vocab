@@ -27,37 +27,90 @@ def material_contains_word(text, word):
     )
 
 
-def material_excerpt_for_word(text, word, limit=280):
-    if not text or not word:
-        return ""
-    pattern = re.compile(
-        rf"\b{re.escape(word)}\b", re.IGNORECASE
-    )
-    match = pattern.search(text)
-    if not match:
-        return ""
+def _normalize_excerpt(text):
+    return re.sub(r"\s+", " ", text or "").strip()
 
-    start = max(
-        text.rfind(".", 0, match.start()),
-        text.rfind("!", 0, match.start()),
-        text.rfind("?", 0, match.start()),
-        text.rfind("\n", 0, match.start()),
+
+def _word_pattern(word):
+    return re.compile(
+        rf"(?<![A-Za-z]){re.escape(word)}(?![A-Za-z])",
+        re.IGNORECASE,
     )
+
+
+def _line_at(text, index):
+    start = text.rfind("\n", 0, index) + 1
+    end = text.find("\n", index)
+    if end == -1:
+        end = len(text)
+    return start, end, text[start:end].strip()
+
+
+def _is_word_bank_line(line, word):
+    return bool(
+        re.fullmatch(
+            rf"[A-O]\.\s+{re.escape(word)}", _normalize_excerpt(line), re.I
+        )
+    )
+
+
+def _word_bank_excerpt(text, index, limit):
+    lines = text.splitlines()
+    cursor = 0
+    line_index = 0
+    for pos, line in enumerate(lines):
+        next_cursor = cursor + len(line) + 1
+        if cursor <= index < next_cursor:
+            line_index = pos
+            break
+        cursor = next_cursor
+
+    start = line_index
+    while start > 0 and re.match(r"\s*[A-O]\.\s+\S+", lines[start - 1]):
+        start -= 1
+    end = line_index
+    while end + 1 < len(lines) and re.match(r"\s*[A-O]\.\s+\S+", lines[end + 1]):
+        end += 1
+
+    options = [
+        _normalize_excerpt(line)
+        for line in lines[start : end + 1]
+        if _normalize_excerpt(line)
+    ]
+    excerpt = "词库选项：" + " ".join(options)
+    return _trim_excerpt(excerpt, "", limit)
+
+
+def _sentence_excerpt(text, match, limit):
+    sentence_marks = ".!?"
+    start = max(text.rfind(mark, 0, match.start()) for mark in sentence_marks)
     end_candidates = [
         index
-        for index in (
-            text.find(".", match.end()),
-            text.find("!", match.end()),
-            text.find("?", match.end()),
-            text.find("\n", match.end()),
-        )
+        for index in (text.find(mark, match.end()) for mark in sentence_marks)
         if index != -1
     ]
     start = 0 if start == -1 else start + 1
     end = min(end_candidates) + 1 if end_candidates else len(text)
-    excerpt = re.sub(r"\s+", " ", text[start:end]).strip()
+    return _trim_excerpt(text[start:end], match.group(0), limit)
+
+
+def _window_excerpt(text, match, limit):
+    start = max(0, match.start() - limit // 2)
+    end = min(len(text), match.end() + limit // 2)
+    excerpt = _normalize_excerpt(text[start:end])
+    if start:
+        excerpt = "…" + excerpt
+    if end < len(text):
+        excerpt = excerpt.rstrip() + "…"
+    return excerpt
+
+
+def _trim_excerpt(excerpt, word, limit):
+    excerpt = _normalize_excerpt(excerpt)
     if len(excerpt) <= limit:
         return excerpt
+    if not word:
+        return excerpt[: limit - 1].rstrip() + "…"
 
     word_index = excerpt.lower().find(word.lower())
     if word_index == -1:
@@ -71,6 +124,39 @@ def material_excerpt_for_word(text, word, limit=280):
     if trim_end < len(excerpt):
         trimmed = trimmed.rstrip() + "…"
     return trimmed
+
+
+def material_excerpt_is_weak(excerpt, word):
+    normalized = _normalize_excerpt(excerpt)
+    if not normalized:
+        return True
+    if normalized.lower() == (word or "").lower():
+        return True
+    if len(WORD_TOKEN_RE.findall(normalized)) < 6:
+        return True
+    return False
+
+
+def material_excerpt_for_word(text, word, limit=420):
+    if not text or not word:
+        return ""
+    matches = list(_word_pattern(word).finditer(text))
+    if not matches:
+        return ""
+
+    fallback = ""
+    for match in matches:
+        _start, _end, line = _line_at(text, match.start())
+        if _is_word_bank_line(line, match.group(0)):
+            fallback = fallback or _word_bank_excerpt(text, match.start(), limit)
+            continue
+
+        excerpt = _sentence_excerpt(text, match, limit)
+        if not material_excerpt_is_weak(excerpt, word):
+            return excerpt
+        fallback = fallback or _window_excerpt(text, match, limit)
+
+    return fallback
 
 
 def material_title_from_filename(path):
